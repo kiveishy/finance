@@ -167,7 +167,8 @@ def running(tmp_path: Path, market: FakeMarket) -> Iterator[tuple[str, OwlApplic
     def start(**server: Any) -> tuple[str, OwlApplication]:
         config = OwlConfig.from_dict(
             {"aggregator": {"mode": "remote"}, "server": {"port": 0, **server},
-             "storage": {"database": str(tmp_path / "owl.db")}, "web": {"root": str(WEB_ROOT)}},
+             "storage": {"database": str(tmp_path / "owl.db")}, "web": {"root": str(WEB_ROOT)},
+             "splits": {"enabled": False}},  # no Yahoo Finance calls from unit tests
             base_dir=tmp_path,
         )
         app = OwlApplication(config, market=market)

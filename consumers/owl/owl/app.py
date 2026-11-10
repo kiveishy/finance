@@ -23,6 +23,7 @@ from .charts import ChartService
 from .config import OwlConfig, app_home, bundle_dir, default_config_path
 from .market_data import MarketData, create_market_data
 from .server import OwlApi, OwlServer, StaticFiles
+from .splits import SplitCorrectionStore, SplitCorrector, YahooSplitReference
 from .watchlist import SqliteWatchlistRepository, WatchlistRepository
 
 logger = logging.getLogger(__name__)
@@ -48,8 +49,15 @@ class OwlApplication:
         self.config = config
         self.market = market or create_market_data(config.aggregator)
         self.watchlist = watchlist or SqliteWatchlistRepository(config.database)
+        self.split_store: SplitCorrectionStore | None = None
+        corrector = None
+        if config.splits.enabled:
+            self.split_store = SplitCorrectionStore(config.database)
+            corrector = SplitCorrector(self.split_store, YahooSplitReference(),
+                                       recheck_seconds=config.splits.recheck_hours * 3600).correct
         self.static = StaticFiles(config.web_root or default_web_root())
-        self.api = OwlApi(self.market, self.watchlist, ChartService(self.market), web_build=self.static.build_id)
+        charts = ChartService(self.market, corrector=corrector)
+        self.api = OwlApi(self.market, self.watchlist, charts, web_build=self.static.build_id)
 
     def create_server(self) -> OwlServer:
         server = self.config.server
@@ -70,6 +78,8 @@ class OwlApplication:
 
     def close(self) -> None:
         self.watchlist.close()
+        if self.split_store is not None:
+            self.split_store.close()
         self.market.close()
 
     def __enter__(self) -> "OwlApplication":

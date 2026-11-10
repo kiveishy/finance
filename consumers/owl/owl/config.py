@@ -66,6 +66,14 @@ class AggregatorLink:
 
 
 @dataclass(frozen=True)
+class SplitConfig:
+    """Correct chart history stored before a stock split, using Yahoo Finance as the reference."""
+
+    enabled: bool = True
+    recheck_hours: float = 24.0
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8710
@@ -91,6 +99,7 @@ class OwlConfig:
     aggregator: AggregatorLink
     server: ServerConfig = ServerConfig()
     browser: BrowserConfig = BrowserConfig()
+    splits: SplitConfig = SplitConfig()
     database: Path = Path("data/owl.db")
     web_root: Path | None = None
     logging: LoggingConfig = LoggingConfig()
@@ -124,6 +133,7 @@ class OwlConfig:
             aggregator=_parse_aggregator(_section(raw, "aggregator"), resolve),
             server=_parse_server(_section(raw, "server")),
             browser=_parse_browser(_section(raw, "browser"), resolve),
+            splits=_parse_splits(_section(raw, "splits")),
             database=resolve(storage.get("database", "data/owl.db")),
             web_root=resolve(web["root"]) if web.get("root") else None,
             logging=LoggingConfig.from_mapping(_section(raw, "logging"), base),
@@ -158,6 +168,13 @@ def _parse_aggregator(section: Mapping[str, Any], resolve: Any) -> AggregatorLin
         api_key=section.get("api_key") or None,
         timeout_seconds=timeout,
     )
+
+
+def _parse_splits(section: Mapping[str, Any]) -> SplitConfig:
+    hours = section.get("recheck_hours", 24)
+    if isinstance(hours, bool) or not isinstance(hours, (int, float)) or hours < 0:
+        raise ConfigurationError(f"splits.recheck_hours must be a number >= 0, got {hours!r}")
+    return SplitConfig(enabled=bool(section.get("enabled", True)), recheck_hours=float(hours))
 
 
 def _parse_browser(section: Mapping[str, Any], resolve: Any) -> BrowserConfig:

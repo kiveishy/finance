@@ -24,6 +24,10 @@
     "storage": {
         "database": "./data/owl.db"
     },
+    "splits": {
+        "enabled": true,
+        "recheck_hours": 24
+    },
     "web": {
         "root": null
     },
