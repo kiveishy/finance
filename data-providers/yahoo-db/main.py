@@ -632,6 +632,8 @@ def api_search_tickers():
     Query parameters:
         - q: Search text (1-64 characters), e.g. "AAP" or "apple"
         - limit: Maximum number of results (1-50, default: 10)
+        - source: "db" (default) searches tickers in the database; "yahoo" looks up
+          all of Yahoo Finance and flags results already in the database (in_database)
     """
     query = (request.args.get('q') or '').strip()
     if not query or len(query) > 64:
@@ -639,16 +641,27 @@ def api_search_tickers():
     limit = request.args.get('limit', 10, type=int)
     if limit is None or not 1 <= limit <= 50:
         return jsonify({"error": "Query parameter 'limit' must be between 1 and 50", "status": "error"}), 400
+    source = request.args.get('source', 'db')
+    if source not in ('db', 'yahoo'):
+        return jsonify({"error": "Query parameter 'source' must be 'db' or 'yahoo'", "status": "error"}), 400
     try:
-        results = service.db.search_tickers(query, limit)
+        if source == 'yahoo':
+            results = service.yahoo_client.search_symbols(query, limit)
+            for item in results:
+                item['in_database'] = service.db.ticker_exists(item['symbol'].upper())
+        else:
+            results = service.db.search_tickers(query, limit)
         return jsonify({
             "status": "success",
             "query": query,
+            "source": source,
             "count": len(results),
             "data": results
         })
     except Exception as e:
-        logger.error(f"Ticker search failed for {query!r}: {e}")
+        logger.error(f"Ticker search ({source}) failed for {query!r}: {e}")
+        if source == 'yahoo':
+            return jsonify({"error": "Yahoo Finance search unavailable", "status": "error"}), 503
         return jsonify({"error": "Search failed", "status": "error"}), 500
 
 

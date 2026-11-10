@@ -230,6 +230,33 @@ class YahooFinanceClient:
         
         logger.error(f"All {self.max_retries} retries exhausted for get_ticker_info({symbol}): {last_error}")
         return None
+
+    def search_symbols(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Look up symbols on Yahoo Finance by ticker or company name (single attempt, for type-ahead).
+
+        Returns:
+            List of dicts with symbol, short_name, long_name, exchange, quote_type.
+
+        Raises:
+            RuntimeError: If the installed yfinance has no search support.
+        """
+        search_cls = getattr(yf, 'Search', None)
+        if search_cls is None:
+            raise RuntimeError("Installed yfinance does not support search (upgrade yfinance)")
+        search = search_cls(query, max_results=limit, news_count=0, lists_count=0,
+                            include_cb=False, recommended=0, timeout=10)
+        return [
+            {
+                'symbol': quote['symbol'],
+                'short_name': quote.get('shortname'),
+                'long_name': quote.get('longname'),
+                'exchange': quote.get('exchDisp') or quote.get('exchange'),
+                'quote_type': quote.get('quoteType'),
+            }
+            for quote in (search.quotes or [])[:limit]
+            if quote.get('symbol')
+        ]
     
     def get_historical_data(
         self, 

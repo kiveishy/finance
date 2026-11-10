@@ -274,6 +274,68 @@
             border-color: #667eea;
         }
 
+        .suggest-wrap {
+            position: relative;
+        }
+
+        .stock-search .suggest-wrap {
+            flex: 1;
+            display: flex;
+        }
+
+        .suggest-list {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 20;
+            margin-top: 4px;
+            max-height: 320px;
+            overflow-y: auto;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+        }
+
+        .suggest-item {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+
+        .suggest-item.active,
+        .suggest-item:hover {
+            background: #f0f4ff;
+        }
+
+        .suggest-symbol {
+            min-width: 70px;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .suggest-name {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .suggest-meta,
+        .suggest-msg {
+            font-size: 0.8rem;
+            color: #888;
+            white-space: nowrap;
+        }
+
+        .suggest-msg {
+            padding: 8px 12px;
+        }
+
         .tabs {
             display: flex;
             border-bottom: 2px solid #e0e0e0;
@@ -486,8 +548,10 @@
                 </p>
                 <div class="form-group">
                     <label for="ticker-input">Ticker Symbol</label>
-                    <input type="text" id="ticker-input" placeholder="e.g., AAPL, MSFT, GOOGL" 
-                           onkeypress="if(event.key === 'Enter') addTicker()">
+                    <div class="suggest-wrap">
+                        <input type="text" id="ticker-input" autocomplete="off" spellcheck="false"
+                               placeholder="Ticker or company name, e.g. AAPL, apple">
+                    </div>
                 </div>
                 <button class="btn btn-primary" onclick="addTicker()">
                     ➕ Add Ticker
@@ -523,8 +587,10 @@
         <div class="card stock-detail-section">
             <h2>🔍 Stock Detail Viewer</h2>
             <div class="stock-search">
-                <input type="text" id="detail-ticker-input" placeholder="Enter ticker symbol (e.g., AAPL, SPY)"
-                       onkeypress="if(event.key === 'Enter') loadStockDetail()">
+                <div class="suggest-wrap">
+                    <input type="text" id="detail-ticker-input" autocomplete="off" spellcheck="false"
+                           placeholder="Ticker or company name (e.g., AAPL, apple, SPY)">
+                </div>
                 <button class="btn btn-primary" onclick="loadStockDetail()">View Details</button>
             </div>
 
@@ -719,6 +785,121 @@
         // Initial load and start polling
         updateStatus();
         statusInterval = setInterval(updateStatus, 5000);
+
+        // ============== Ticker suggestions (type-ahead) ==============
+
+        /**
+         * Shows matching tickers under `input` while typing (via /api/search).
+         * Arrow keys move, Enter/click picks the highlighted match, Escape closes the list.
+         * onSubmit runs on Enter when no list is open; picking only runs it when submitOnPick is true.
+         */
+        function attachSuggest(input, { source, onSubmit, submitOnPick }) {
+            const list = document.createElement('div');
+            list.className = 'suggest-list';
+            list.hidden = true;
+            input.parentElement.appendChild(list);
+            let items = [];
+            let active = -1;
+            let timer = null;
+            let seq = 0;
+
+            function span(cls, text) {
+                const el = document.createElement('span');
+                el.className = cls;
+                el.textContent = text;
+                return el;
+            }
+
+            function close() {
+                clearTimeout(timer);
+                seq++;
+                items = [];
+                active = -1;
+                list.hidden = true;
+            }
+
+            function render(message) {
+                list.replaceChildren();
+                if (message) {
+                    const msg = document.createElement('div');
+                    msg.className = 'suggest-msg';
+                    msg.textContent = message;
+                    list.appendChild(msg);
+                }
+                items.forEach((item, index) => {
+                    const row = document.createElement('div');
+                    row.className = 'suggest-item' + (index === active ? ' active' : '');
+                    const meta = [item.exchange, item.quote_type, item.in_database ? 'in database' : '']
+                        .filter(Boolean).join(' · ');
+                    row.append(span('suggest-symbol', item.symbol),
+                               span('suggest-name', item.long_name || item.short_name || ''),
+                               span('suggest-meta', meta));
+                    row.addEventListener('mousedown', (e) => { e.preventDefault(); pick(index); });
+                    list.appendChild(row);
+                });
+                list.hidden = !message && !items.length;
+                list.children[active + (message ? 1 : 0)]?.scrollIntoView({ block: 'nearest' });
+            }
+
+            function pick(index) {
+                input.value = items[index].symbol;
+                close();
+                if (submitOnPick) onSubmit();
+            }
+
+            input.addEventListener('input', () => {
+                clearTimeout(timer);
+                const query = input.value.trim();
+                const mySeq = ++seq;
+                if (!query) {
+                    close();
+                    return;
+                }
+                timer = setTimeout(() => {
+                    fetch('/api/search?' + new URLSearchParams({ q: query, limit: '10', source }))
+                        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+                        .then(({ ok, data }) => {
+                            if (mySeq !== seq) return;  // superseded by a newer keystroke
+                            items = ok ? data.data : [];
+                            const exact = items.findIndex(i => i.symbol.toUpperCase() === query.toUpperCase());
+                            active = items.length ? Math.max(exact, 0) : -1;
+                            render(ok ? (items.length ? '' : 'No matches') : (data.error || 'Search failed'));
+                        })
+                        .catch(() => {
+                            if (mySeq === seq) render('Search unavailable');
+                        });
+                }, 200);
+            });
+
+            input.addEventListener('keydown', (e) => {
+                const open = !list.hidden && items.length > 0;
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    if (!open) return;
+                    e.preventDefault();
+                    active = (active + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+                    render('');
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (open && active >= 0) {
+                        pick(active);
+                    } else {
+                        close();
+                        onSubmit();
+                    }
+                } else if (e.key === 'Escape') {
+                    close();
+                }
+            });
+
+            input.addEventListener('blur', close);
+        }
+
+        attachSuggest(document.getElementById('ticker-input'), {
+            source: 'yahoo', onSubmit: addTicker, submitOnPick: false
+        });
+        attachSuggest(document.getElementById('detail-ticker-input'), {
+            source: 'db', onSubmit: loadStockDetail, submitOnPick: true
+        });
 
         // ============== Stock Detail Viewer ==============
 
