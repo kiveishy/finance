@@ -69,4 +69,6 @@ _write_once(dist_dir / "aggregator.json", aggregator_config)
 
 owl_config = json.loads((app_dir / "config.json").read_text(encoding="utf-8"))
 owl_config["aggregator"]["config_file"] = "aggregator.json"
+browser = owl_config.setdefault("browser", {})
+browser["chrome_dir"] = _rebase(browser.get("chrome_dir") or "../../common/chrome", app_dir)
 _write_once(dist_dir / "config.json", owl_config)

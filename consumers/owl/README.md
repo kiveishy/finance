@@ -97,6 +97,10 @@ Status codes: 400 invalid input, 401 API key, 404 not found, 409 conflict, 415 n
 | `server.cors_origins` | `http://localhost`, `https://localhost`, `capacitor://localhost` | Origins allowed to call the API cross-origin (the Android app). `*` is rejected |
 | `server.open_browser` | `true` | Open the UI when the server starts |
 | `server.allow_insecure_remote` | `false` | Owl **refuses** to listen on a non-loopback address without an API key unless this is `true` |
+| `browser.chrome` | `local` | Which Chrome opens the UI. `local`: the Chrome shipped in the repo (`browser.chrome_dir`), with a private profile, closed again when owl stops. `installed`: the Chrome installed on the PC, with the user's own profile. A missing local Chrome falls back to the installed one, and a missing Chrome to the default browser |
+| `browser.chrome_dir` | `../../common/chrome` | Folder with the local `chrome.exe` (Windows build; on Linux the installed Chrome is used) |
+| `browser.app_window` | `true` | Open as an app window (`--app`, no tabs or address bar) instead of a normal tab |
+| `browser.profile_dir` | `null` | Profile of the local Chrome. Default `%LOCALAPPDATA%\owl\chrome-profile` (Linux: `~/.local/share/owl/chrome-profile`) |
 | `storage.database` | `./data/owl.db` | Watchlist and settings database |
 | `web.root` | `null` | Override the UI folder (default: `web/`, or the copy bundled in the executable) |
 | `logging.*` | | Same keys as the aggregator (`level`, `file`, `max_bytes`, `backup_count`) |
@@ -124,6 +128,9 @@ checkout on `/mnt/c`, put the venv on the Linux file system, e.g.
 Each executable bundles the web UI, the aggregator package and the yahoo-db REST client. The
 build writes `config.json` and `aggregator.json` (the provider chain) next to the executable;
 existing files are never overwritten. Owl stores its data in `data/owl.db` next to the config.
+The local Chrome (~376 MB) is not bundled: the generated `config.json` points `browser.chrome_dir`
+at the repo's `common/chrome`. To ship the executable elsewhere, copy that folder next to it and
+set `"chrome_dir": "chrome"`.
 
 ## Android APK
 

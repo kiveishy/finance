@@ -7,7 +7,6 @@ import logging
 import signal
 import sys
 import threading
-import webbrowser
 from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
@@ -16,6 +15,7 @@ from finance_aggregator.core.errors import ConfigurationError
 from finance_aggregator.logging_setup import configure_logging
 
 from . import __version__
+from .browser import BrowserLauncher
 from .charts import ChartService
 from .config import OwlConfig, app_home, bundle_dir, default_config_path
 from .market_data import MarketData, create_market_data
@@ -104,12 +104,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     stop = threading.Event()
     if threading.current_thread() is threading.main_thread():
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    browser = BrowserLauncher(config.browser)
     try:
         with OwlApplication(config) as app, app.create_server() as server:
             print(f"Owl is running at {server.url}  (Ctrl+C to stop)", flush=True)
             threading.Thread(target=app.backfill_names, name="name-backfill", daemon=True).start()
             if config.server.open_browser and not args.no_browser:
-                webbrowser.open(server.url)
+                browser.open(server.url)
             while not stop.wait(0.5):
                 pass
     except ConfigurationError as exc:
@@ -120,5 +121,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except KeyboardInterrupt:
         pass
+    finally:
+        browser.close()
     print("Owl stopped")
     return 0

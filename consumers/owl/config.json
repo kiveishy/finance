@@ -14,6 +14,12 @@
         "open_browser": true,
         "allow_insecure_remote": false
     },
+    "browser": {
+        "chrome": "local",
+        "chrome_dir": "../../common/chrome",
+        "app_window": true,
+        "profile_dir": null
+    },
     "storage": {
         "database": "./data/owl.db"
     },

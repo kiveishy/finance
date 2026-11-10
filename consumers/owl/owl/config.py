@@ -16,6 +16,8 @@ from finance_aggregator.core.errors import ConfigurationError
 CONFIG_ENV_VAR = "OWL_CONFIG"
 API_KEY_ENV_VAR = "OWL_API_KEY"
 DEFAULT_CORS_ORIGINS = ("http://localhost", "https://localhost", "capacitor://localhost")
+DEFAULT_CHROME_DIR = "../../common/chrome"
+CHROME_CHOICES = ("local", "installed")
 
 
 def app_home() -> Path:
@@ -33,6 +35,22 @@ def bundle_dir() -> Path | None:
 def default_config_path() -> Path:
     env = os.environ.get(CONFIG_ENV_VAR)
     return Path(env).expanduser() if env else app_home() / "config.json"
+
+
+def default_chrome_profile_dir() -> Path:
+    if sys.platform == "win32" and os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"]) / "owl" / "chrome-profile"
+    return Path.home() / ".local" / "share" / "owl" / "chrome-profile"
+
+
+@dataclass(frozen=True)
+class BrowserConfig:
+    """Which Chrome opens the UI when server.open_browser is true."""
+
+    chrome: str = "local"  # "local" (chrome_dir, private profile) or "installed" (Chrome installed on the PC)
+    chrome_dir: Path | None = None
+    app_window: bool = True  # --app window without tabs/address bar
+    profile_dir: Path = field(default_factory=default_chrome_profile_dir)
 
 
 @dataclass(frozen=True)
@@ -71,6 +89,7 @@ class OwlConfig:
     base_dir: Path
     aggregator: AggregatorLink
     server: ServerConfig = ServerConfig()
+    browser: BrowserConfig = BrowserConfig()
     database: Path = Path("data/owl.db")
     web_root: Path | None = None
     logging: LoggingConfig = LoggingConfig()
@@ -103,6 +122,7 @@ class OwlConfig:
             base_dir=base,
             aggregator=_parse_aggregator(_section(raw, "aggregator"), resolve),
             server=_parse_server(_section(raw, "server")),
+            browser=_parse_browser(_section(raw, "browser"), resolve),
             database=resolve(storage.get("database", "data/owl.db")),
             web_root=resolve(web["root"]) if web.get("root") else None,
             logging=LoggingConfig.from_mapping(_section(raw, "logging"), base),
@@ -136,6 +156,19 @@ def _parse_aggregator(section: Mapping[str, Any], resolve: Any) -> AggregatorLin
         url=url,
         api_key=section.get("api_key") or None,
         timeout_seconds=timeout,
+    )
+
+
+def _parse_browser(section: Mapping[str, Any], resolve: Any) -> BrowserConfig:
+    chrome = str(section.get("chrome", "local"))
+    if chrome not in CHROME_CHOICES:
+        raise ConfigurationError(f"browser.chrome must be 'local' or 'installed', got {chrome!r}")
+    profile_dir = section.get("profile_dir")
+    return BrowserConfig(
+        chrome=chrome,
+        chrome_dir=resolve(section.get("chrome_dir") or DEFAULT_CHROME_DIR),
+        app_window=bool(section.get("app_window", True)),
+        profile_dir=resolve(profile_dir) if profile_dir else default_chrome_profile_dir(),
     )
 
 
