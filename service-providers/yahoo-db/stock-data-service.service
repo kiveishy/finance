@@ -1,0 +1,34 @@
+[Unit]
+Description=Stock Data Service - Yahoo Finance Sync and Flask Dashboard
+Documentation=https://github.com/your-repo/yahoo-db
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+# --- Update these paths to match your installation ---
+WorkingDirectory=/home/ykiveish/workspace/projects/yahoo-db/apps/0.0.0.7
+ExecStart=/home/ykiveish/workspace/projects/yahoo-db/yahoodb/bin/python /home/ykiveish/workspace/projects/yahoo-db/apps/0.0.0.7/main.py
+# ---
+
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Logging
+StandardOutput=file:/home/ykiveish/workspace/projects/yahoo-db/apps/0.0.0.7/stock_service.log
+StandardError=file:/home/ykiveish/workspace/projects/yahoo-db/apps/0.0.0.7/stock_service.log
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/ykiveish/workspace/projects/yahoo-db/apps/data
+ReadWritePaths=/home/ykiveish/workspace/projects/yahoo-db/apps/0.0.0.7
+
+[Install]
+WantedBy=multi-user.target
