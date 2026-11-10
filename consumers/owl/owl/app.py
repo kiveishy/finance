@@ -43,8 +43,8 @@ class OwlApplication:
         self.config = config
         self.market = market or create_market_data(config.aggregator)
         self.watchlist = watchlist or SqliteWatchlistRepository(config.database)
-        self.api = OwlApi(self.market, self.watchlist, ChartService(self.market))
         self.static = StaticFiles(config.web_root or default_web_root())
+        self.api = OwlApi(self.market, self.watchlist, ChartService(self.market), web_build=self.static.build_id)
 
     def create_server(self) -> OwlServer:
         server = self.config.server

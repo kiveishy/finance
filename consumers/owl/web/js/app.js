@@ -126,7 +126,7 @@ class OwlApp {
         }
     }
 
-    async pickGroup(title) {
+    async pickGroup(title, symbol = null) {
         if (!this.groups.length) {
             const created = await this.api.createGroup("Watchlist");
             await this.refreshGroups();
@@ -136,27 +136,33 @@ class OwlApp {
         return prompt({
             title,
             placeholder: "Select a group",
-            items: this.groups.map((g) => ({ label: g.name, detail: `${g.items.length} symbols`, value: g.id, icon: "folder" })),
+            items: this.groups.map((g) => {
+                const has = symbol && g.items.some((i) => i.symbol === symbol);
+                return { label: g.name, detail: has ? `already contains ${symbol}` : `${g.items.length} symbols`, value: g.id, icon: "folder" };
+            }),
             allowCustom: false,
         });
     }
 
+    /** Search-first: pick the stock (ticker or company name), then the group unless one is given or only one exists. */
     async addSymbol(groupId = null) {
         try {
-            groupId ??= await this.pickGroup("Add symbol to group");
-            if (groupId === null) return;
-            const group = this.groups.find((g) => g.id === groupId);
-            const symbol = await prompt({
-                title: `Add symbol to "${group?.name ?? "group"}"`,
+            const target = groupId === null ? (this.groups.length === 1 ? this.groups[0] : null)
+                : this.groups.find((g) => g.id === groupId);
+            const picked = await prompt({
+                title: target ? `Add symbol to "${target.name}"` : "Add symbol",
                 placeholder: "Type a ticker or company name, e.g. AAPL, apple, berkshire",
                 hint: "Matches appear as you type. Enter adds the highlighted stock, Escape cancels",
-                search: (text) => this.searchItems(text, group?.name),
+                search: (text) => this.searchItems(text, target?.name),
                 validate: (v) => (SYMBOL_RE.test(v.trim()) ? null : "Not a valid ticker symbol"),
             });
-            if (!symbol) return;
-            await this.api.addSymbol(groupId, symbol.trim().toUpperCase());
+            if (!picked) return;
+            const symbol = picked.trim().toUpperCase();
+            groupId ??= await this.pickGroup(`Add ${symbol} to group`, symbol);
+            if (groupId === null) return;
+            await this.api.addSymbol(groupId, symbol);
             await this.refreshGroups();
-            this.open(symbol.trim().toUpperCase());
+            this.open(symbol);
         } catch (err) {
             this.reportError("Adding symbol failed", err);
         }
@@ -501,6 +507,7 @@ class OwlApp {
     onConnectionChange({ previous, state }) {
         this.renderConnection();
         if (this.connection.status) $("status-version").textContent = `Owl ${this.connection.status.version}`;
+        this.checkWebBuild(this.connection.status?.web_build);
         if (previous === state || previous === State.CHECKING) return;
 
         const wasHealthy = previous === State.ONLINE || previous === State.DEGRADED;
@@ -519,6 +526,16 @@ class OwlApp {
         }
         if (this.connection.healthy && (!wasHealthy || this.chartPending)) this.loadChart();
         else if (!this.connection.healthy && wasHealthy && this.ui.active) this.loadChart();
+    }
+
+    /** A tab left open across an Owl update keeps running the old UI code until reloaded. */
+    checkWebBuild(build) {
+        if (!build) return;
+        this.webBuild ??= build;
+        if (build === this.webBuild || this.reloadOffered) return;
+        this.reloadOffered = true;
+        notify("Owl was updated. Reload to use the new version.", "info", 0,
+            [{ label: "Reload", run: () => location.reload() }]);
     }
 
     outageText() {

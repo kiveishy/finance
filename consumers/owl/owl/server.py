@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import logging
@@ -117,10 +118,12 @@ class OwlApi:
         charts: ChartService,
         *,
         status_ttl_seconds: float = 5.0,
+        web_build: Callable[[], str] | None = None,
     ) -> None:
         self._market = market
         self._watchlist = watchlist
         self._charts = charts
+        self._web_build = web_build
         self._status_ttl = status_ttl_seconds
         self._status_lock = threading.Lock()
         self._status_cache: tuple[float, ServiceStatus] | None = None
@@ -174,6 +177,7 @@ class OwlApi:
         status, checked_at = self.provider_status(force=req.query.get("refresh") == "1")
         return ok({
             "version": __version__,
+            "web_build": self._web_build() if self._web_build else None,
             "aggregator": status.to_dict(),
             "checked_at": datetime.fromtimestamp(checked_at, timezone.utc).isoformat(timespec="seconds"),
         })
@@ -275,6 +279,14 @@ class StaticFiles:
     @property
     def root(self) -> Path:
         return self._root
+
+    def build_id(self) -> str:
+        """Fingerprint of the web files; changes when the UI is updated."""
+        digest = hashlib.sha1()
+        for path in sorted(p for p in self._root.rglob("*") if p.is_file()):
+            stat = path.stat()
+            digest.update(f"{path.relative_to(self._root).as_posix()}:{stat.st_mtime_ns}:{stat.st_size};".encode())
+        return digest.hexdigest()[:12]
 
     def resolve(self, url_path: str) -> Path | None:
         relative = unquote(url_path).lstrip("/") or "index.html"

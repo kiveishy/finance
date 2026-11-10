@@ -18,11 +18,12 @@ export function el(tag, props = {}, ...children) {
 
 export const icon = (name, extra = "") => el("i", { class: `codicon codicon-${name} ${extra}`.trim() });
 
-export function notify(message, kind = "info", timeout = 6000) {
+export function notify(message, kind = "info", timeout = 6000, actions = []) {
     const box = document.getElementById("notifications");
     const item = el("div", { class: "notification" },
         icon(kind === "error" ? "error" : kind === "warning" ? "warning" : "info"),
         el("div", { class: "text" }, message),
+        actions.map(({ label, run }) => el("button", { class: "banner-button", onclick: () => { item.remove(); run(); } }, label)),
         el("button", { class: "icon-button", title: "Close", onclick: () => item.remove() }, icon("close")));
     box.append(item);
     if (timeout) setTimeout(() => item.remove(), timeout);
@@ -151,7 +152,7 @@ class QuickInput {
         items.forEach((item, index) => {
             this.list.append(el("div", {
                 class: "quickinput-item" + (index === this.active ? " active" : ""),
-                onmousedown: (e) => { e.preventDefault(); this.finish(item.value); },
+                onmousedown: (e) => { e.preventDefault(); e.stopPropagation(); this.finish(item.value); },
             },
                 item.icon ? icon(item.icon) : null,
                 el("span", { class: "label" }, highlight(item.label, value)),
@@ -200,7 +201,8 @@ class QuickInput {
         this.resetSearch();
         const resolve = this.pending;
         this.pending = null;
-        if (resolve) resolve(value);
+        // Resolve after the current event so a follow-up prompt isn't affected by it (e.g. closed as an outside click).
+        if (resolve) setTimeout(() => resolve(value));
     }
 }
 

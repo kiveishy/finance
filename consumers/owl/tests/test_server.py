@@ -148,6 +148,19 @@ class TestStaticFiles:
     def test_traversal_and_missing(self, path: str) -> None:
         assert StaticFiles(WEB_ROOT).serve(path).status == 404
 
+    def test_build_id_changes_with_web_files(self, tmp_path: Path) -> None:
+        (tmp_path / "js").mkdir()
+        (tmp_path / "js" / "app.js").write_text("v1")
+        static = StaticFiles(tmp_path)
+        first = static.build_id()
+        assert first == static.build_id()
+        (tmp_path / "js" / "app.js").write_text("v2 longer")
+        assert static.build_id() != first
+
+    def test_status_reports_web_build(self, market: FakeMarket, tmp_path: Path) -> None:
+        api = OwlApi(market, SqliteWatchlistRepository(tmp_path / "o.db"), ChartService(market), web_build=lambda: "abc123")
+        assert call(api, "GET", "/api/status")[1]["data"]["web_build"] == "abc123"
+
 
 @pytest.fixture
 def running(tmp_path: Path, market: FakeMarket) -> Iterator[tuple[str, OwlApplication]]:
