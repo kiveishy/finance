@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import signal
 import sys
 import threading
+import urllib.request
 from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
@@ -23,6 +26,8 @@ from .server import OwlApi, OwlServer, StaticFiles
 from .watchlist import SqliteWatchlistRepository, WatchlistRepository
 
 logger = logging.getLogger(__name__)
+
+NO_CONSOLE = sys.stderr is None  # windowed executable (no terminal): errors are shown in a message box
 
 
 def default_web_root() -> Path:
@@ -86,12 +91,15 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    if sys.stdout is None or sys.stderr is None:  # windowed executable: no console
+        devnull = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 - lives as long as the process
+        sys.stdout = sys.stdout or devnull
+        sys.stderr = sys.stderr or devnull
     args = _parse_args(list(sys.argv[1:] if argv is None else argv))
     try:
         config = OwlConfig.load(args.config or default_config_path())
     except ConfigurationError as exc:
-        print(f"Configuration error: {exc}", file=sys.stderr)
-        return 2
+        return _fail(f"Configuration error: {exc}", 2)
     server_config = config.server
     if args.host:
         server_config = replace(server_config, host=args.host)
@@ -100,28 +108,62 @@ def main(argv: Sequence[str] | None = None) -> int:
     config = replace(config, server=server_config)
     configure_logging(config.logging, console_level=args.log_level or "INFO")
     logger.info("owl %s starting with config %s", __version__, config.path)
+    open_browser = config.server.open_browser and not args.no_browser
+
+    running_url = _running_owl_url(config.server.host, config.server.port)
+    if running_url:
+        logger.info("owl is already running at %s - showing it instead of starting again", running_url)
+        print(f"Owl is already running at {running_url}", flush=True)
+        if open_browser:
+            # No job binding: a Chrome started here must outlive this short-lived process.
+            BrowserLauncher(config.browser, bind_children=lambda: None).open(running_url)
+        return 0
 
     stop = threading.Event()
     if threading.current_thread() is threading.main_thread():
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    browser = BrowserLauncher(config.browser)
+    browser = BrowserLauncher(config.browser, on_closed=stop.set if config.browser.exit_on_close else None)
     try:
         with OwlApplication(config) as app, app.create_server() as server:
             print(f"Owl is running at {server.url}  (Ctrl+C to stop)", flush=True)
             threading.Thread(target=app.backfill_names, name="name-backfill", daemon=True).start()
-            if config.server.open_browser and not args.no_browser:
+            if open_browser:
                 browser.open(server.url)
             while not stop.wait(0.5):
                 pass
     except ConfigurationError as exc:
-        print(f"Configuration error: {exc}", file=sys.stderr)
-        return 2
+        return _fail(f"Configuration error: {exc}", 2)
     except OSError as exc:
-        print(f"Cannot start owl: {exc}", file=sys.stderr)
-        return 1
+        return _fail(f"Cannot start owl: {exc}", 1)
     except KeyboardInterrupt:
         pass
     finally:
         browser.close()
+    logger.info("owl stopped")
     print("Owl stopped")
     return 0
+
+
+def _running_owl_url(host: str, port: int) -> str | None:
+    """URL of an owl already serving on host:port, if any."""
+    if port == 0:
+        return None
+    shown = "127.0.0.1" if host in ("0.0.0.0", "", "::") else host
+    url = f"http://{shown}:{port}"
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # never via a corporate proxy
+        with opener.open(f"{url}/api/health", timeout=2) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    return url if isinstance(body, dict) and isinstance(body.get("data"), dict) and "version" in body["data"] else None
+
+
+def _fail(message: str, code: int) -> int:
+    logger.error(message)
+    print(message, file=sys.stderr)
+    if NO_CONSOLE and sys.platform == "win32":
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, message, "Owl", 0x10)  # MB_ICONERROR
+    return code

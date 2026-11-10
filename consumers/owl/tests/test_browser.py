@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from finance_aggregator.core import ConfigurationError
+from owl import browser as browser_module
 from owl.browser import BrowserLauncher, LOCAL_EXECUTABLES, find_local_chrome
 from owl.config import BrowserConfig, OwlConfig
 
@@ -16,19 +18,27 @@ class FakeProc:
     pid = 4242
 
     def __init__(self) -> None:
+        self.exited = threading.Event()
+        self.returncode: int | None = None
         self.terminated = False
 
+    def exit(self, code: int = 0) -> None:
+        self.returncode = code
+        self.exited.set()
+
     def poll(self) -> int | None:
-        return 0 if self.terminated else None
+        return self.returncode
 
     def terminate(self) -> None:
         self.terminated = True
+        self.exit(1)
 
-    def wait(self, timeout: float | None = None) -> int:
-        return 0
+    def wait(self, timeout: float | None = None) -> int | None:
+        self.exited.wait(timeout)
+        return self.returncode
 
     def kill(self) -> None:
-        self.terminated = True
+        self.terminate()
 
 
 class Recorder:
@@ -36,6 +46,7 @@ class Recorder:
         self.calls: list[tuple[list[str], Any]] = []
         self.defaults: list[str] = []
         self.procs: list[FakeProc] = []
+        self.closed = threading.Event()
 
     def popen(self, args: list[str], **kwargs: Any) -> FakeProc:
         self.calls.append((args, kwargs.get("env")))
@@ -43,8 +54,9 @@ class Recorder:
         return self.procs[-1]
 
     def launcher(self, config: BrowserConfig, installed: Path | None = None) -> BrowserLauncher:
-        return BrowserLauncher(config, popen=self.popen, open_default=self.defaults.append,  # type: ignore[arg-type]
-                               installed_finder=lambda: installed)
+        return BrowserLauncher(config, on_closed=self.closed.set, popen=self.popen,  # type: ignore[arg-type]
+                               open_default=self.defaults.append, installed_finder=lambda: installed,
+                               bind_children=lambda: None)
 
 
 def _local_chrome(tmp_path: Path) -> Path:
@@ -65,6 +77,24 @@ def test_local_chrome_opens_private_app_window_and_is_closed_on_stop(tmp_path: P
     assert (tmp_path / "profile").is_dir() and env["GOOGLE_API_KEY"] == "no"
     launcher.close()
     assert rec.procs[0].terminated
+    assert not rec.closed.wait(0.2)  # owl stopping is not "the user closed the window"
+
+
+def test_closing_the_local_chrome_window_reports_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(browser_module, "HANDOFF_SECONDS", 0.0)
+    rec = Recorder()
+    launcher = rec.launcher(BrowserConfig(chrome="local", chrome_dir=_local_chrome(tmp_path), profile_dir=tmp_path / "p"))
+    launcher.open(URL)
+    rec.procs[0].exit(0)
+    assert rec.closed.wait(2)
+
+
+def test_handoff_to_running_chrome_does_not_stop_owl(tmp_path: Path) -> None:
+    rec = Recorder()
+    launcher = rec.launcher(BrowserConfig(chrome="local", chrome_dir=_local_chrome(tmp_path), profile_dir=tmp_path / "p"))
+    launcher.open(URL)
+    rec.procs[0].exit(0)  # exits at once: the window went to an already running Chrome
+    assert not rec.closed.wait(0.3)
 
 
 def test_missing_local_chrome_falls_back_to_installed_then_default(tmp_path: Path) -> None:
@@ -105,6 +135,7 @@ def test_browser_config_parsing(tmp_path: Path) -> None:
         base_dir=tmp_path,
     )
     assert (custom.browser.chrome, custom.browser.app_window) == ("installed", False)
+    assert default.browser.exit_on_close is True
     assert custom.browser.chrome_dir == tmp_path / "c" and custom.browser.profile_dir == tmp_path / "prof"
     with pytest.raises(ConfigurationError, match="browser.chrome"):
         OwlConfig.from_dict({**base, "browser": {"chrome": "edge"}}, base_dir=tmp_path)

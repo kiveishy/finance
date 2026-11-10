@@ -31,7 +31,8 @@ exe = EXE(  # noqa: F821
     a.datas,
     [],
     name="owl",
-    console=True,
+    # Windows: no terminal window - the UI is the Chrome window, errors go to logs/owl.log and a message box.
+    console=sys.platform != "win32",
     upx=False,
     # Long-running server: keep the onefile extraction out of %TEMP% (Storage Sense cleans it).
     runtime_tmpdir=r"%LOCALAPPDATA%\owl\runtime" if sys.platform == "win32" else None,

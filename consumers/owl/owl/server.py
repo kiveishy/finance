@@ -8,6 +8,7 @@ import json
 import logging
 import mimetypes
 import re
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -327,7 +328,8 @@ _CONTENT_TYPES = {
 
 class OwlHttpServer(ThreadingHTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    # On Windows SO_REUSEADDR lets a second process bind the same port silently; there it isn't needed anyway.
+    allow_reuse_address = sys.platform != "win32"
 
     def __init__(self, config: ServerConfig, api: OwlApi, static: StaticFiles) -> None:
         self.config = config

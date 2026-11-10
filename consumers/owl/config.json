@@ -18,6 +18,7 @@
         "chrome": "local",
         "chrome_dir": "../../common/chrome",
         "app_window": true,
+        "exit_on_close": true,
         "profile_dir": null
     },
     "storage": {

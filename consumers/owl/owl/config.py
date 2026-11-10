@@ -50,6 +50,7 @@ class BrowserConfig:
     chrome: str = "local"  # "local" (chrome_dir, private profile) or "installed" (Chrome installed on the PC)
     chrome_dir: Path | None = None
     app_window: bool = True  # --app window without tabs/address bar
+    exit_on_close: bool = True  # stop owl when the local Chrome window it opened is closed
     profile_dir: Path = field(default_factory=default_chrome_profile_dir)
 
 
@@ -168,6 +169,7 @@ def _parse_browser(section: Mapping[str, Any], resolve: Any) -> BrowserConfig:
         chrome=chrome,
         chrome_dir=resolve(section.get("chrome_dir") or DEFAULT_CHROME_DIR),
         app_window=bool(section.get("app_window", True)),
+        exit_on_close=bool(section.get("exit_on_close", True)),
         profile_dir=resolve(profile_dir) if profile_dir else default_chrome_profile_dir(),
     )
 
