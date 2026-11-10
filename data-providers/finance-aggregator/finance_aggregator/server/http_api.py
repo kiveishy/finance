@@ -5,6 +5,7 @@ Endpoints (mirroring the yahoo-db API shape):
     GET /api/status
     GET /api/ticker/<symbol>
     GET /api/ticker/<symbol>/history?days=N|months=N|years=N|start_date=YYYY-MM-DD[&end_date=YYYY-MM-DD]
+    GET /api/search?q=<symbol or company name>&limit=N
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from ..core.errors import (
 )
 from ..core.interfaces import FinanceService, StockDataSource
 from ..core.models import DateRange, normalize_symbol
+from ..core.search import normalize_limit
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,8 @@ class ApiApplication:
         try:
             if path == "/api/status":
                 return ApiResponse(HTTPStatus.OK, {"status": "success", "data": self._service.check_status().to_dict()})
+            if path == "/api/search":
+                return self._search(query)
             if match := _HISTORY_RE.match(path):
                 return self._history(unquote(match["symbol"]), query)
             if match := _TICKER_RE.match(path):
@@ -102,6 +106,15 @@ class ApiApplication:
         )
         history = self._source.get_price_history(normalize_symbol(raw_symbol), date_range)
         return ApiResponse(HTTPStatus.OK, {"status": "success", **history.to_dict()})
+
+    def _search(self, query: Mapping[str, str]) -> ApiResponse:
+        matches = self._source.search_symbols(query.get("q", ""), normalize_limit(query.get("limit")))
+        return ApiResponse(HTTPStatus.OK, {
+            "status": "success",
+            "query": query.get("q", ""),
+            "count": len(matches),
+            "data": [m.to_dict() for m in matches],
+        })
 
 
 def _query_int(query: Mapping[str, str], key: str) -> int | None:

@@ -28,15 +28,31 @@ AAPL = {
     "market_cap": 3.0e12, "currency": "USD", "exchange": "NMS", "quote_type": "EQUITY",
     "created_at": "2026-01-30 12:31:09", "updated_at": "2026-10-29 09:00:00",
 }
+SEARCH_ROWS = [
+    {"symbol": "AAPL", "short_name": "Apple Inc.", "long_name": "Apple Inc.", "exchange": "NMS", "quote_type": "EQUITY", "score": 75},
+    {"symbol": "APLE", "short_name": "Apple Hospitality", "long_name": "Apple Hospitality REIT, Inc.", "exchange": "NYQ", "quote_type": "EQUITY", "score": 75},
+]
 
 
 class _StubYahooDb(BaseHTTPRequestHandler):
     requests_seen: list[str] = []
+    search_enabled = True  # False mimics a yahoo-db server that predates /api/search
 
     def do_GET(self) -> None:  # noqa: N802
         url = urlsplit(self.path)
         _StubYahooDb.requests_seen.append(self.path)
         query = parse_qs(url.query)
+        if url.path == "/api/search":
+            if not _StubYahooDb.search_enabled:
+                self._send_html(404, "<!doctype html><title>404 Not Found</title>")
+                return
+            q = query["q"][0].lower()
+            rows = [r for r in SEARCH_ROWS if q in r["symbol"].lower() or q in (r["long_name"] or "").lower()]
+            self._send(200, {"status": "success", "query": q, "count": len(rows), "data": rows})
+            return
+        if url.path == "/api/tickers":
+            self._send(200, {"status": "success", "count": 4, "tickers": ["AAPL", "AAPB", "MSFT", "XAAP"]})
+            return
         if url.path == "/status":
             self._send(200, {"sync_running": False, "sync_status": "completed", "ticker_count": 11884,
                              "last_sync_time": "2026-10-29T09:22:04", "progress": {}})
@@ -60,6 +76,14 @@ class _StubYahooDb(BaseHTTPRequestHandler):
         payload = json.dumps(body).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _send_html(self, code: int, html: str) -> None:
+        payload = html.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -145,6 +169,39 @@ def test_status(provider: YahooDbApiProvider) -> None:
     status = provider.check_status()
     assert status.state is HealthState.AVAILABLE
     assert status.details["ticker_count"] == 11884
+
+
+def test_search_uses_yahoo_db_search_endpoint(provider: YahooDbApiProvider) -> None:
+    _StubYahooDb.search_enabled = True
+    matches = provider.search_symbols("apple", 5)
+    assert [(m.symbol, m.name, m.source) for m in matches] == [
+        ("AAPL", "Apple Inc.", "api"), ("APLE", "Apple Hospitality REIT, Inc.", "api"),
+    ]
+
+
+def test_search_falls_back_to_symbol_list_on_old_servers(provider: YahooDbApiProvider) -> None:
+    _StubYahooDb.search_enabled = False
+    try:
+        matches = provider.search_symbols("aap", 5)
+        assert [m.symbol for m in matches] == ["AAPB", "AAPL", "XAAP"]  # prefix matches before contains
+        before = len([r for r in _StubYahooDb.requests_seen if r.startswith("/api/search")])
+        provider.search_symbols("msft", 5)
+        after = len([r for r in _StubYahooDb.requests_seen if r.startswith("/api/search")])
+        assert after == before, "a missing endpoint is remembered instead of being retried every keystroke"
+    finally:
+        _StubYahooDb.search_enabled = True
+
+
+def test_client_handles_non_json_error_pages(yahoo_db_loader, stub_server) -> None:  # type: ignore[no-untyped-def]
+    module = yahoo_db_loader.load_api_client_module()
+    client = module.YahooDB(host=stub_server[0], port=stub_server[1], timeout=3)
+    _StubYahooDb.search_enabled = False
+    try:
+        with pytest.raises(module.YahooDBError) as caught:
+            client.search_tickers("aap")
+        assert caught.value.status_code == 404
+    finally:
+        _StubYahooDb.search_enabled = True
 
 
 def test_missing_client_sources_raise_unavailable(tmp_path: Path) -> None:

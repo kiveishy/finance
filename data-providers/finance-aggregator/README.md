@@ -153,6 +153,36 @@ Each attempt is logged with its outcome and latency. When fallbacks happen, the 
 logged too, for example:
 `yahoo-db-local: unavailable (...) -> yahoo-db-api: not_found (...) -> yahoo-finance: success`.
 
+### Symbol search (type-ahead)
+
+Search works differently from data retrieval. Instead of the first provider winning, every
+provider with `supports_search` is asked **in parallel**, each with a time limit (8 s). Their
+results are then **merged**:
+
+| Provider | Matches on | Notes |
+|----------|------------|-------|
+| `yahoo_db_local` | Symbol and company name of the tickers in the database | SQL `LIKE` ranking, escaped |
+| `yahoo_db_api` | yahoo-db `GET /api/search` (symbol + name) | Older yahoo-db servers without the endpoint answer 404. The provider remembers that for 10 min and falls back to a symbol-only match over `GET /api/tickers` (cached for 1 h) |
+| `yahoo_finance` | Yahoo's own search (`yf.Search`) | Any symbol or company worldwide, including ETFs, indices, futures and foreign listings |
+
+The merge removes duplicates by symbol, fills in missing name, exchange and type from the other
+providers, and joins the sources with `+` (for example `yahoo-db-api+yahoo-finance`). It then
+ranks the results by relevance:
+
+| Match | Score |
+|-------|-------|
+| Exact symbol | 100 |
+| Symbol prefix | ~90 |
+| Name prefix | 75 |
+| Name word prefix | 65 |
+| Symbol contains | 50 |
+| Name contains | 45 |
+| Fuzzy hit from Yahoo | 20 |
+
+Futures, FX and crypto (`=`) lose 20 points, and foreign listings (`.`) lose 5, so the primary
+listing comes first. A query must be 1-64 characters of letters, digits, spaces or `.&'-^=,/()+`.
+If no provider answers at all, the search raises `ProviderUnavailableError`.
+
 ## Configuration
 
 `config.json` sits next to `main.py` or next to the executable. Override it with
@@ -208,6 +238,7 @@ runs and the exit code reflects the result (see [Error contract](#error-contract
 |---------|-------------|
 | `status [--json]` | Aggregator state plus each provider's state, latency and detail, in priority order |
 | `read SYMBOL [--info \| --history] [--days N \| --months N \| --years N \| --start DATE [--end DATE]] [--limit N] [--json]` | Ticker information and price history. Default: both, last 30 days. `--limit` caps the printed rows (default 25, 0 = all) |
+| `search QUERY... [--limit N] [--json]` / `find` | Finds symbols by ticker or company name (`search apple`, `search berkshire hath`). Default 10 results, max 50 |
 | `serve [--host H] [--port P]` | Runs the HTTP API in the foreground (Ctrl+C or SIGTERM stops it) |
 | `help [command]` / `?` | Command list or detailed help for one command (`<command> --help` also works) |
 | `exit` / `quit` / `q` | Leaves the shell (Ctrl+D / Ctrl+Z also exits) |
@@ -219,6 +250,7 @@ finance> status
 finance> read AAPL
 finance> read MSFT --history --start 2026-03-02 --end 2026-03-06
 finance> read SPY --info --json
+finance> search nvidia
 ```
 
 Logs go to `logs/finance-aggregator.log`. The console shows only warnings and above, unless you
@@ -236,10 +268,12 @@ its own `source`.
 | GET | `/api/status` | Aggregator and provider status |
 | GET | `/api/ticker/{symbol}` | Ticker information |
 | GET | `/api/ticker/{symbol}/history?days=N\|months=N\|years=N\|start_date=YYYY-MM-DD[&end_date=YYYY-MM-DD]` | Price history (default: last 30 days) |
+| GET | `/api/search?q=QUERY[&limit=N]` | Symbol search by ticker or company name. Returns `{status, query, count, data: [{symbol, name, exchange, quote_type, source, score}]}`. Default limit 10, max 50 |
 
 ```bash
 curl http://127.0.0.1:5100/api/ticker/AAPL
 curl "http://127.0.0.1:5100/api/ticker/AAPL/history?days=10"
+curl "http://127.0.0.1:5100/api/search?q=apple&limit=5"
 ```
 
 Error responses contain a generic message and, where useful, a list of
@@ -332,7 +366,8 @@ Logs go to journald and to the app's rotating log file.
 # my_company/finance_providers.py
 from typing import Any, Mapping
 from finance_aggregator.core import (DataNotFoundError, DataProvider, DateRange, PriceBar,
-                                     PriceHistory, ProviderUnavailableError, TickerInfo)
+                                     PriceHistory, ProviderUnavailableError, SymbolMatch,
+                                     TickerInfo)
 from finance_aggregator.providers import ProviderContext, register_provider
 
 @register_provider
@@ -363,6 +398,13 @@ class PrivateApiProvider(DataProvider):
 
     def _probe(self):                                  # used by `status`; raise FinanceError if down
         return "reachable", {"url": self._client.url}
+
+    # Optional: take part in symbol search
+    supports_search = True
+
+    def _search(self, query: str, limit: int) -> list[SymbolMatch]:
+        return [SymbolMatch(r["symbol"], r.get("name"), r.get("exchange"), r.get("type"))
+                for r in self._client.lookup(query, limit)]   # query/limit are already validated
 ```
 
 2. Load it and place it in the chain with `config.json` only. No consumer code changes:

@@ -1,0 +1,11 @@
+{
+    "name": "Owl stock viewer",
+    "short_name": "Owl",
+    "start_url": "./index.html",
+    "display": "standalone",
+    "background_color": "#1e1e1e",
+    "theme_color": "#3c3c3c",
+    "icons": [
+        { "src": "icons/owl.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+    ]
+}

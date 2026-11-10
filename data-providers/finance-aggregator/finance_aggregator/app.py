@@ -51,6 +51,18 @@ def build_providers(
     return providers
 
 
+def create_aggregator(
+    config: AppConfig, *, registry: ProviderRegistry = default_registry
+) -> AggregatorService:
+    """Build the configured provider chain; the entry point for embedding the aggregator in consumers."""
+    load_plugins(config.plugins)
+    provider_context = ProviderContext(base_dir=config.base_dir, bundle_dir=bundle_dir())
+    return AggregatorService(
+        build_providers(config, registry, provider_context),
+        policy=FallbackPolicy(config.aggregator.history_max_staleness_days),
+    )
+
+
 class Application:
     def __init__(
         self,
@@ -61,13 +73,8 @@ class Application:
         out: TextIO | None = None,
     ) -> None:
         self.config = config
-        load_plugins(config.plugins)
-        provider_context = ProviderContext(base_dir=config.base_dir, bundle_dir=bundle_dir())
-        self.providers = build_providers(config, registry, provider_context)
-        self.aggregator = AggregatorService(
-            self.providers,
-            policy=FallbackPolicy(config.aggregator.history_max_staleness_days),
-        )
+        self.aggregator = create_aggregator(config, registry=registry)
+        self.providers = list(self.aggregator.providers)
         self.commands = CommandRegistry(commands if commands is not None else builtin_commands())
         self.context = CommandContext(
             source=self.aggregator,

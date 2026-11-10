@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from ..core.models import PriceHistory, ServiceStatus, TickerInfo
+from ..core.search import SymbolMatch
 
 
 def format_table(headers: Sequence[str], rows: Sequence[Sequence[Any]], *, align_right: Sequence[bool] | None = None) -> str:
@@ -89,6 +90,14 @@ def render_status(status: ServiceStatus) -> str:
     ]
     table = format_table(["#", "Provider", "Type", "State", "Latency", "Detail"], rows)
     return f"  Service {status.name}: {status.state.value.upper()} - {status.detail}\n\n{_indent(table)}"
+
+
+def render_matches(matches: Sequence[SymbolMatch]) -> str:
+    table = format_table(
+        ["#", "Symbol", "Name", "Exchange", "Type", "Score", "Source"],
+        [(i + 1, m.symbol, m.name, m.exchange, m.quote_type, f"{m.score:.0f}", m.source) for i, m in enumerate(matches)],
+    )
+    return _indent(table)
 
 
 def _indent(text: str, prefix: str = "  ") -> str:

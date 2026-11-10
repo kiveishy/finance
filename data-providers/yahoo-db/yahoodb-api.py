@@ -76,12 +76,13 @@ class YahooDB:
     def _raise_for_error(self, resp: requests.Response) -> None:
         """Raise YahooDBError if the response indicates failure."""
         if resp.status_code >= 400:
+            body = None
             try:
                 body = resp.json()
                 msg = body.get("error", resp.text)
             except Exception:
                 msg = resp.text
-            raise YahooDBError(msg, status_code=resp.status_code, response=body if resp.text else None)
+            raise YahooDBError(msg, status_code=resp.status_code, response=body if isinstance(body, dict) else None)
         # Also treat application-level errors
         try:
             body = resp.json()
@@ -154,6 +155,23 @@ class YahooDB:
         """
         data = self._get("/api/tickers")
         return data.get("tickers", [])
+
+    def search_tickers(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Search tickers by symbol or company name, best matches first.
+
+        Args:
+            query: Search text, e.g. ``"AAP"`` or ``"apple"`` (1-64 characters).
+            limit: Maximum number of results (1-50).
+
+        Endpoint: GET /api/search?q=<query>&limit=<limit>
+
+        Returns:
+            List of dicts with keys: symbol, short_name, long_name, exchange,
+            quote_type, score.
+        """
+        data = self._get("/api/search", params={"q": query, "limit": limit})
+        return data.get("data", [])
 
     def add_ticker(self, symbol: str) -> dict:
         """

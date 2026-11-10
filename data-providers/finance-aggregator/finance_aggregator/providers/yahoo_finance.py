@@ -16,9 +16,16 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Mapping
 
-from ..core.errors import DataNotFoundError, FinanceError, ProviderError, ProviderUnavailableError
+from ..core.errors import (
+    DataNotFoundError,
+    FinanceError,
+    InvalidRequestError,
+    ProviderError,
+    ProviderUnavailableError,
+)
 from ..core.interfaces import DataProvider
-from ..core.models import DateRange, PriceBar, PriceHistory, TickerInfo
+from ..core.models import DateRange, PriceBar, PriceHistory, TickerInfo, normalize_symbol
+from ..core.search import SymbolMatch
 from .registry import ProviderContext, option, register_provider
 
 logger = logging.getLogger(__name__)
@@ -42,6 +49,8 @@ _HTTP_STATUS_RE = re.compile(r"HTTP Error (\d{3})")
 _UNAVAILABLE_HTTP = {401, 403, 408, 429, 500, 502, 503, 504}
 
 TickerFactory = Callable[[str], Any]
+#: (query, limit) -> list of Yahoo quote dicts; injectable for tests.
+SearchFactory = Callable[[str, int], list[Mapping[str, Any]]]
 
 
 def _http_status(exc: BaseException) -> int | None:
@@ -55,6 +64,7 @@ def _http_status(exc: BaseException) -> int | None:
 @register_provider
 class YahooFinanceProvider(DataProvider):
     kind = "yahoo_finance"
+    supports_search = True
 
     _configure_lock = threading.Lock()
     _configured = False
@@ -68,6 +78,7 @@ class YahooFinanceProvider(DataProvider):
         proxy: str | None = None,
         probe_symbol: str = "SPY",
         ticker_factory: TickerFactory | None = None,
+        search_factory: SearchFactory | None = None,
     ) -> None:
         super().__init__(name)
         self._timeout = timeout_seconds
@@ -75,6 +86,7 @@ class YahooFinanceProvider(DataProvider):
         self._proxy = proxy
         self._probe_symbol = probe_symbol
         self._ticker_factory = ticker_factory
+        self._search_factory = search_factory
 
     @classmethod
     def from_config(
@@ -156,6 +168,32 @@ class YahooFinanceProvider(DataProvider):
                 )
         bars = [b for b in bars if date_range.start <= b.date <= date_range.end]
         return PriceHistory(symbol, date_range, tuple(bars))
+
+    def _search(self, query: str, limit: int) -> list[SymbolMatch]:
+        try:
+            if self._search_factory is not None:
+                quotes = self._search_factory(query, limit)
+            else:
+                result = self._yf().Search(
+                    query, max_results=limit, news_count=0, lists_count=0,
+                    include_cb=False, recommended=0, timeout=self._timeout,
+                )
+                quotes = result.quotes
+        except Exception as exc:
+            raise self._translate(exc, f"search {query!r}") from exc
+        matches = []
+        for quote in quotes or ():
+            try:
+                symbol = normalize_symbol(str(quote.get("symbol") or ""))
+            except InvalidRequestError:
+                continue  # Yahoo also returns instruments our symbol rules do not accept
+            matches.append(SymbolMatch(
+                symbol=symbol,
+                name=quote.get("longname") or quote.get("shortname"),
+                exchange=quote.get("exchDisp") or quote.get("exchange"),
+                quote_type=quote.get("quoteType"),
+            ))
+        return matches
 
     def _probe(self) -> tuple[str, Mapping[str, Any]]:
         history = self.get_price_history(self._probe_symbol, DateRange.last_days(10))

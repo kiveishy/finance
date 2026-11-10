@@ -1,0 +1,29 @@
+{
+    "aggregator": {
+        "mode": "embedded",
+        "config_file": "../../data-providers/finance-aggregator/config.json",
+        "url": "http://127.0.0.1:5100",
+        "api_key": null,
+        "timeout_seconds": 30
+    },
+    "server": {
+        "host": "127.0.0.1",
+        "port": 8710,
+        "api_key": null,
+        "cors_origins": ["http://localhost", "https://localhost", "capacitor://localhost"],
+        "open_browser": true,
+        "allow_insecure_remote": false
+    },
+    "storage": {
+        "database": "./data/owl.db"
+    },
+    "web": {
+        "root": null
+    },
+    "logging": {
+        "level": "INFO",
+        "file": "./logs/owl.log",
+        "max_bytes": 5242880,
+        "backup_count": 5
+    }
+}

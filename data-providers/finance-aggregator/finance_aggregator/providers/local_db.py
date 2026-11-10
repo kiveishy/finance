@@ -24,6 +24,7 @@ from ..core.errors import (
 )
 from ..core.interfaces import DataProvider
 from ..core.models import TICKER_INFO_FIELDS, DateRange, PriceBar, PriceHistory, TickerInfo
+from ..core.search import SymbolMatch
 from .registry import ProviderContext, option, register_provider
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,24 @@ _HISTORY_SQL = """
     FROM historical_data
     WHERE ticker_symbol = ? AND date BETWEEN ? AND ?
     ORDER BY date ASC
+"""
+# Same ranking as yahoo-db's DatabaseManager.search_tickers (read-only connection here).
+_SEARCH_SQL = r"""
+    SELECT symbol, COALESCE(long_name, short_name) AS name, exchange, quote_type,
+           CASE
+               WHEN symbol = :exact THEN 100
+               WHEN symbol LIKE :prefix ESCAPE '\' THEN 90
+               WHEN long_name LIKE :prefix ESCAPE '\' OR short_name LIKE :prefix ESCAPE '\' THEN 75
+               WHEN long_name LIKE :word ESCAPE '\' OR short_name LIKE :word ESCAPE '\' THEN 65
+               WHEN symbol LIKE :contains ESCAPE '\' THEN 50
+               ELSE 45
+           END AS score
+    FROM tickers
+    WHERE symbol LIKE :contains ESCAPE '\'
+       OR short_name LIKE :contains ESCAPE '\'
+       OR long_name LIKE :contains ESCAPE '\'
+    ORDER BY score DESC, length(symbol), symbol
+    LIMIT :limit
 """
 
 
@@ -49,6 +68,7 @@ def sqlite_readonly_uri(path: Path) -> str:
 @register_provider
 class YahooDbLocalProvider(DataProvider):
     kind = "yahoo_db_local"
+    supports_search = True
 
     def __init__(self, db_path: Path, *, name: str | None = None, timeout_seconds: float = 5.0) -> None:
         super().__init__(name)
@@ -92,6 +112,23 @@ class YahooDbLocalProvider(DataProvider):
         )
         return PriceHistory(symbol, date_range, tuple(PriceBar.from_mapping(dict(r)) for r in rows))
 
+    def _search(self, query: str, limit: int) -> list[SymbolMatch]:
+        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        rows = self._query_all(
+            _SEARCH_SQL,
+            {
+                "exact": query.upper(),
+                "prefix": f"{escaped}%",
+                "word": f"% {escaped}%",
+                "contains": f"%{escaped}%",
+                "limit": limit,
+            },
+        )
+        return [
+            SymbolMatch(r["symbol"], r["name"], r["exchange"], r["quote_type"], score=float(r["score"]))
+            for r in rows
+        ]
+
     def _probe(self) -> tuple[str, Mapping[str, Any]]:
         tickers = self._query_one("SELECT COUNT(*) AS n FROM tickers", ())
         latest = self._query_one("SELECT MAX(date) AS d FROM historical_data", ())
@@ -113,14 +150,14 @@ class YahooDbLocalProvider(DataProvider):
         connection.row_factory = sqlite3.Row
         return connection
 
-    def _query_one(self, sql: str, params: tuple[Any, ...]) -> sqlite3.Row | None:
+    def _query_one(self, sql: str, params: tuple[Any, ...] | dict[str, Any]) -> sqlite3.Row | None:
         try:
             with closing(self._connect()) as conn:
                 return conn.execute(sql, params).fetchone()
         except sqlite3.Error as exc:
             raise self._translate(exc) from exc
 
-    def _query_all(self, sql: str, params: tuple[Any, ...]) -> list[sqlite3.Row]:
+    def _query_all(self, sql: str, params: tuple[Any, ...] | dict[str, Any]) -> list[sqlite3.Row]:
         try:
             with closing(self._connect()) as conn:
                 return conn.execute(sql, params).fetchall()

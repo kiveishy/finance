@@ -380,6 +380,65 @@ class DatabaseManager:
             return []
     
     @_with_retry
+    def search_tickers(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Search tickers by symbol or company name (case-insensitive), best matches first.
+
+        Ranking: exact symbol, symbol prefix, name prefix, word prefix in name, contains.
+
+        Args:
+            query: Text typed by the user, e.g. "AAP" or "apple".
+            limit: Maximum number of results.
+
+        Returns:
+            List of dicts with symbol, short_name, long_name, exchange, quote_type, score.
+        """
+        text = query.strip()
+        if not text:
+            return []
+        escaped = text.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        params = {
+            'exact': text.upper(),
+            'prefix': f'{escaped}%',
+            'word': f'% {escaped}%',
+            'contains': f'%{escaped}%',
+            'limit': max(1, min(int(limit), 50)),
+        }
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(r"""
+                SELECT symbol, short_name, long_name, exchange, quote_type,
+                       CASE
+                           WHEN symbol = :exact THEN 100
+                           WHEN symbol LIKE :prefix ESCAPE '\' THEN 90
+                           WHEN long_name LIKE :prefix ESCAPE '\' OR short_name LIKE :prefix ESCAPE '\' THEN 75
+                           WHEN long_name LIKE :word ESCAPE '\' OR short_name LIKE :word ESCAPE '\' THEN 65
+                           WHEN symbol LIKE :contains ESCAPE '\' THEN 50
+                           ELSE 45
+                       END AS score
+                FROM tickers
+                WHERE symbol LIKE :contains ESCAPE '\'
+                   OR short_name LIKE :contains ESCAPE '\'
+                   OR long_name LIKE :contains ESCAPE '\'
+                ORDER BY score DESC, length(symbol), symbol
+                LIMIT :limit
+            """, params)
+            return [
+                {
+                    'symbol': row['symbol'],
+                    'short_name': row['short_name'],
+                    'long_name': row['long_name'],
+                    'exchange': row['exchange'],
+                    'quote_type': row['quote_type'],
+                    'score': row['score'],
+                }
+                for row in cursor.fetchall()
+            ]
+        except sqlite3.Error as e:
+            logger.error(f"Failed to search tickers for {query!r}: {e}")
+            return []
+
+    @_with_retry
     def ticker_exists(self, symbol: str) -> bool:
         """
         Check if a ticker exists in the database.

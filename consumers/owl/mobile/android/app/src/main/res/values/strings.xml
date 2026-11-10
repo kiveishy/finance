@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Owl</string>
+    <string name="title_activity_main">Owl</string>
+    <string name="package_name">com.finance.owl</string>
+    <string name="custom_url_scheme">com.finance.owl</string>
+</resources>

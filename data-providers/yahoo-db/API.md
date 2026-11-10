@@ -318,6 +318,41 @@ curl http://localhost:5000/api/sync/status
 
 ---
 
+### 8. Search Tickers
+
+Search tickers by symbol or company name (case-insensitive). Results are ranked: exact symbol,
+symbol prefix, name prefix, word prefix in the name, then substring matches.
+
+**Endpoint:** `GET /api/search`
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| q | string | Search text, 1-64 characters (e.g. `AAP`, `apple`) |
+| limit | integer | Maximum results, 1-50 (default 10) |
+
+**Response:**
+```json
+{
+    "status": "success",
+    "query": "apple",
+    "count": 2,
+    "data": [
+        {"symbol": "AAPL", "short_name": "Apple Inc.", "long_name": "Apple Inc.", "exchange": "NMS", "quote_type": "EQUITY", "score": 75},
+        {"symbol": "APLE", "short_name": "Apple Hospitality REIT, Inc.", "long_name": "Apple Hospitality REIT, Inc.", "exchange": "NYQ", "quote_type": "EQUITY", "score": 75}
+    ]
+}
+```
+
+**Error Response (400):** missing/too long `q` or `limit` out of range.
+
+**Example:**
+```bash
+curl "http://localhost:5000/api/search?q=apple&limit=5"
+```
+
+---
+
 ## HTTP Status Codes
 
 | Code | Description |

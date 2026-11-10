@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from types import TracebackType
 from typing import Any, Callable, ClassVar, Mapping, TypeVar
 
-from .errors import DataNotFoundError, FinanceError, ProviderError
+from .errors import DataNotFoundError, FinanceError, ProviderError, ProviderUnavailableError
 from .models import (
     DateRange,
     HealthState,
@@ -24,6 +24,7 @@ from .models import (
     TickerInfo,
     normalize_symbol,
 )
+from .search import SymbolMatch, normalize_limit, normalize_query
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,10 @@ class StockDataSource(ABC):
 
     @abstractmethod
     def get_price_history(self, symbol: str, date_range: DateRange) -> PriceHistory: ...
+
+    def search_symbols(self, query: str, limit: int = 10) -> list[SymbolMatch]:
+        """Tickers whose symbol or company name matches `query`, nearest first."""
+        raise ProviderUnavailableError(f"{type(self).__name__} does not support symbol search")
 
     def close(self) -> None:
         """Release resources (connections, sessions). Safe to call more than once."""
@@ -67,6 +72,8 @@ class DataProvider(StockDataSource):
 
     #: Registry type key used in configuration (``"type": "<kind>"``).
     kind: ClassVar[str] = ""
+    #: Set to True and implement `_search` to take part in symbol search.
+    supports_search: ClassVar[bool] = False
 
     def __init__(self, name: str | None = None) -> None:
         self._name = name or self.kind or type(self).__name__
@@ -98,6 +105,14 @@ class DataProvider(StockDataSource):
             )
         return history.with_source(self.name)
 
+    def search_symbols(self, query: str, limit: int = 10) -> list[SymbolMatch]:
+        normalized = normalize_query(query)
+        limit = normalize_limit(limit)
+        if not self.supports_search:
+            return super().search_symbols(normalized, limit)
+        matches = self._guard("search_symbols", self._search, normalized, limit)
+        return [m.with_source(self.name) for m in matches[:limit]]
+
     def check_status(self) -> ProviderStatus:
         if not self.is_available():
             return ProviderStatus(self.name, self.kind, HealthState.UNAVAILABLE, self.unavailable_reason())
@@ -124,6 +139,10 @@ class DataProvider(StockDataSource):
     @abstractmethod
     def _probe(self) -> tuple[str, Mapping[str, Any]]:
         """Health check. Return (human readable detail, extra details) or raise a FinanceError."""
+
+    def _search(self, query: str, limit: int) -> list[SymbolMatch]:
+        """Search hook (only called when `supports_search` is True). Order: provider's best first."""
+        raise NotImplementedError
 
     # ---- helpers -------------------------------------------------------------------------------
 

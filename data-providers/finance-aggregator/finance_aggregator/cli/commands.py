@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from ..core.models import DateRange
 from .base import Command, CommandArgumentParser, CommandContext, CommandError, CommandOutcome
-from .formatting import render_history, render_status, render_ticker_info
+from .formatting import render_history, render_matches, render_status, render_ticker_info
 
 
 def _print_json(ctx: CommandContext, payload: Any) -> None:
@@ -64,6 +64,28 @@ class StatusCommand(Command):
             _print_json(ctx, status.to_dict())
         else:
             ctx.out.write(render_status(status) + "\n")
+        return CommandOutcome.CONTINUE
+
+
+class SearchCommand(Command):
+    name = "search"
+    aliases = ("find",)
+    summary = "Find tickers by symbol or company name (nearest matches first)"
+
+    def configure_parser(self, parser: CommandArgumentParser) -> None:
+        parser.add_argument("query", nargs="+", help='symbol or company name, e.g. AAP or "apple"')
+        parser.add_argument("--limit", type=int, default=10, help="max results (1-50, default 10)")
+        parser.add_argument("--json", action="store_true", help="print machine readable JSON")
+
+    def execute(self, args: argparse.Namespace, ctx: CommandContext) -> CommandOutcome:
+        query = " ".join(args.query)
+        matches = ctx.source.search_symbols(query, args.limit)
+        if args.json:
+            _print_json(ctx, [m.to_dict() for m in matches])
+        elif not matches:
+            ctx.out.write(f"No tickers match {query!r}\n")
+        else:
+            ctx.out.write(render_matches(matches) + "\n")
         return CommandOutcome.CONTINUE
 
 
@@ -158,4 +180,4 @@ class ServeCommand(Command):
 
 
 def builtin_commands() -> list[Command]:
-    return [HelpCommand(), StatusCommand(), ReadCommand(), ServeCommand(), ExitCommand()]
+    return [HelpCommand(), StatusCommand(), SearchCommand(), ReadCommand(), ServeCommand(), ExitCommand()]

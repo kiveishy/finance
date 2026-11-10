@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#3c3c3c">
+    <title>Owl</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icons/owl.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="vendor/codicons/codicon.css">
+    <link rel="stylesheet" href="css/owl.css">
+</head>
+<body>
+<div id="titlebar">
+    <button class="icon-button mobile-only" id="toggle-sidebar" title="Toggle sidebar"><i class="codicon codicon-menu"></i></button>
+    <img src="icons/owl.svg" alt="" class="titlebar-logo">
+    <span class="titlebar-title" id="window-title">Owl</span>
+</div>
+
+<div id="workbench">
+    <nav id="activitybar">
+        <button class="activity active" data-view="explorer" title="Explorer"><i class="codicon codicon-list-tree"></i></button>
+        <button class="activity" data-action="go-to-symbol" title="Go to symbol (Ctrl+P)"><i class="codicon codicon-search"></i></button>
+        <div class="activity-spacer"></div>
+        <button class="activity" data-action="settings" title="Settings"><i class="codicon codicon-settings-gear"></i></button>
+    </nav>
+
+    <aside id="sidebar">
+        <div class="sidebar-header">
+            <span>EXPLORER</span>
+            <div class="sidebar-actions">
+                <button class="icon-button" data-action="add-symbol" title="Add symbol"><i class="codicon codicon-add"></i></button>
+                <button class="icon-button" data-action="new-group" title="New group"><i class="codicon codicon-new-folder"></i></button>
+                <button class="icon-button" data-action="refresh" title="Refresh"><i class="codicon codicon-refresh"></i></button>
+            </div>
+        </div>
+        <div id="explorer" class="tree" role="tree"></div>
+    </aside>
+    <div id="sash" title="Drag to resize"></div>
+
+    <main id="editor">
+        <div id="banner" role="alert" hidden></div>
+        <div id="tabs" role="tablist"></div>
+        <div id="welcome" class="welcome">
+            <img src="icons/owl.svg" alt="" class="welcome-logo">
+            <h1>Owl</h1>
+            <p>Select a symbol in the <b>Explorer</b> to open its chart.</p>
+            <div class="welcome-actions">
+                <button class="link" data-action="add-symbol"><i class="codicon codicon-add"></i> Add symbol</button>
+                <button class="link" data-action="new-group"><i class="codicon codicon-new-folder"></i> New group</button>
+                <button class="link" data-action="settings"><i class="codicon codicon-settings-gear"></i> Server settings</button>
+            </div>
+        </div>
+        <div id="chart-panel" hidden>
+            <div id="breadcrumbs"></div>
+            <div id="chart-toolbar">
+                <div class="segmented" id="range-buttons"></div>
+                <div class="toolbar-separator"></div>
+                <div class="segmented" id="interval-buttons"></div>
+                <div class="toolbar-separator"></div>
+                <div class="dropdown" id="indicators-dropdown">
+                    <button class="toolbar-button" id="indicators-button"><i class="codicon codicon-graph-line"></i> Indicators <i class="codicon codicon-chevron-down"></i></button>
+                    <div class="dropdown-menu" id="indicators-menu" hidden></div>
+                </div>
+                <div class="toolbar-spacer"></div>
+                <button class="icon-button" data-action="zoom-out" title="Zoom out"><i class="codicon codicon-zoom-out"></i></button>
+                <button class="icon-button" data-action="zoom-in" title="Zoom in"><i class="codicon codicon-zoom-in"></i></button>
+                <button class="icon-button" data-action="zoom-reset" title="Reset zoom to range"><i class="codicon codicon-screen-full"></i></button>
+                <button class="icon-button" data-action="reload-chart" title="Reload data"><i class="codicon codicon-refresh"></i></button>
+            </div>
+            <div id="chart-container">
+                <div id="legend"></div>
+                <div id="chart-message" hidden></div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<footer id="statusbar">
+    <div class="status-left">
+        <span class="status-item" id="status-connection" title="Aggregator status (click to refresh)"><i class="codicon codicon-plug"></i> connecting…</span>
+        <span class="status-item" id="status-sources"></span>
+    </div>
+    <div class="status-right">
+        <span class="status-item" id="status-quote"></span>
+        <span class="status-item" id="status-version">Owl</span>
+    </div>
+</footer>
+
+<div id="quickinput" hidden>
+    <div class="quickinput-title" id="quickinput-title"></div>
+    <input id="quickinput-field" type="text" autocomplete="off" spellcheck="false">
+    <div class="quickinput-message" id="quickinput-message"></div>
+    <div class="quickinput-list" id="quickinput-list"></div>
+</div>
+<div id="notifications"></div>
+
+<script src="vendor/lightweight-charts/lightweight-charts.standalone.production.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

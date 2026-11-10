@@ -1,0 +1,13 @@
+{
+    "appId": "com.finance.owl",
+    "appName": "Owl",
+    "webDir": "../web",
+    "server": {
+        "androidScheme": "http",
+        "cleartext": true
+    },
+    "android": {
+        "allowMixedContent": false,
+        "backgroundColor": "#1e1e1e"
+    }
+}

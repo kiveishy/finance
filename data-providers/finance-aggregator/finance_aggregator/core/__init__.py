@@ -22,6 +22,7 @@ from .models import (
     normalize_symbol,
     parse_date,
 )
+from .search import SymbolMatch, merge_matches, normalize_limit, normalize_query, relevance
 
 __all__ = [
     "AttemptOutcome",
@@ -41,7 +42,12 @@ __all__ = [
     "ProviderUnavailableError",
     "ServiceStatus",
     "StockDataSource",
+    "SymbolMatch",
     "TickerInfo",
+    "merge_matches",
+    "normalize_limit",
+    "normalize_query",
     "normalize_symbol",
     "parse_date",
+    "relevance",
 ]

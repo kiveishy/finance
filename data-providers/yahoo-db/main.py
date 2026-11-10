@@ -624,6 +624,34 @@ def api_get_all_tickers():
         return jsonify({"error": str(e), "status": "error"}), 500
 
 
+@app.route('/api/search', methods=['GET'])
+def api_search_tickers():
+    """
+    Search tickers by symbol or company name.
+    
+    Query parameters:
+        - q: Search text (1-64 characters), e.g. "AAP" or "apple"
+        - limit: Maximum number of results (1-50, default: 10)
+    """
+    query = (request.args.get('q') or '').strip()
+    if not query or len(query) > 64:
+        return jsonify({"error": "Query parameter 'q' must be 1-64 characters", "status": "error"}), 400
+    limit = request.args.get('limit', 10, type=int)
+    if limit is None or not 1 <= limit <= 50:
+        return jsonify({"error": "Query parameter 'limit' must be between 1 and 50", "status": "error"}), 400
+    try:
+        results = service.db.search_tickers(query, limit)
+        return jsonify({
+            "status": "success",
+            "query": query,
+            "count": len(results),
+            "data": results
+        })
+    except Exception as e:
+        logger.error(f"Ticker search failed for {query!r}: {e}")
+        return jsonify({"error": "Search failed", "status": "error"}), 500
+
+
 @app.route('/api/ticker/<symbol>/updates', methods=['GET'])
 def api_get_ticker_updates(symbol: str):
     """

@@ -7,11 +7,14 @@ sources, and only adapts its results/errors to the common provider contract.
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping, Protocol
+import threading
+import time
+from typing import Any, Callable, Mapping, Protocol
 
 from ..core.errors import DataNotFoundError, FinanceError, ProviderError, ProviderUnavailableError
 from ..core.interfaces import DataProvider
 from ..core.models import DateRange, PriceBar, PriceHistory, TickerInfo
+from ..core.search import SymbolMatch, relevance
 from .registry import ProviderContext, option, register_provider
 from .yahoo_db_bridge import YahooDbModuleLoader, default_search_dirs
 
@@ -31,13 +34,19 @@ class YahooDbClient(Protocol):
         self, symbol: str, *, start_date: str | None = None, end_date: str | None = None
     ) -> list[dict[str, Any]]: ...
 
+    def get_all_tickers(self) -> list[str]: ...
+
 
 _UNAVAILABLE_HTTP = {408, 429, 502, 503, 504}
+#: How long to remember that the yahoo-db server predates /api/search, and to cache its ticker list.
+SEARCH_FALLBACK_TTL_SECONDS = 600.0
+SYMBOL_INDEX_TTL_SECONDS = 3600.0
 
 
 @register_provider
 class YahooDbApiProvider(DataProvider):
     kind = "yahoo_db_api"
+    supports_search = True
 
     def __init__(
         self,
@@ -45,10 +54,15 @@ class YahooDbApiProvider(DataProvider):
         *,
         client_error: type[Exception] = Exception,
         name: str | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         super().__init__(name)
         self._client = client
         self._client_error = client_error
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._search_missing_until = 0.0
+        self._symbol_index: tuple[float, tuple[str, ...]] | None = None
 
     @classmethod
     def from_config(
@@ -93,6 +107,43 @@ class YahooDbApiProvider(DataProvider):
         except self._client_error as exc:
             raise self._translate(exc, f"history of {symbol}") from exc
         return PriceHistory(symbol, date_range, tuple(PriceBar.from_mapping(r) for r in records or ()))
+
+    def _search(self, query: str, limit: int) -> list[SymbolMatch]:
+        search = getattr(self._client, "search_tickers", None)
+        if search is not None and self._clock() >= self._search_missing_until:
+            try:
+                rows = search(query, limit=limit)
+            except self._client_error as exc:
+                if getattr(exc, "status_code", None) not in (404, 405):
+                    raise self._translate(exc, f"search {query!r}") from exc
+                logger.info("%s has no /api/search (older yahoo-db); using symbol-only search", self.base_url)
+                self._search_missing_until = self._clock() + SEARCH_FALLBACK_TTL_SECONDS
+            else:
+                return [
+                    SymbolMatch(
+                        symbol=str(r["symbol"]),
+                        name=r.get("long_name") or r.get("short_name"),
+                        exchange=r.get("exchange"),
+                        quote_type=r.get("quote_type"),
+                        score=float(r.get("score") or 0.0),
+                    )
+                    for r in rows
+                ]
+        candidates = [(relevance(query, s, None), s) for s in self._symbols()]
+        ranked = sorted((c for c in candidates if c[0] > 0), key=lambda c: (-c[0], len(c[1]), c[1]))
+        return [SymbolMatch(symbol, score=score) for score, symbol in ranked[:limit]]
+
+    def _symbols(self) -> tuple[str, ...]:
+        with self._lock:
+            cached = self._symbol_index
+            if cached and self._clock() - cached[0] < SYMBOL_INDEX_TTL_SECONDS:
+                return cached[1]
+            try:
+                symbols = tuple(str(s).upper() for s in self._client.get_all_tickers())
+            except self._client_error as exc:
+                raise self._translate(exc, "ticker list") from exc
+            self._symbol_index = (self._clock(), symbols)
+            return symbols
 
     def _probe(self) -> tuple[str, Mapping[str, Any]]:
         try:

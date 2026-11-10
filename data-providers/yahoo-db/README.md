@@ -230,6 +230,7 @@ The connection handling uses only the Python standard library (`sqlite3`, `threa
 | GET | `/api/tickers` | Get all tickers |
 | GET | `/api/ticker/{symbol}` | Get ticker details |
 | GET | `/api/ticker/{symbol}/history` | Get historical data |
+| GET | `/api/search?q=apple&limit=10` | Search tickers by symbol or company name |
 | POST | `/api/ticker` | Add new ticker |
 | POST | `/api/sync/start` | Start synchronization |
 | POST | `/api/sync/stop` | Stop synchronization |

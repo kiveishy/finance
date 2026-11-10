@@ -17,8 +17,9 @@ Fallback rules (per request):
 from __future__ import annotations
 
 import logging
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Callable, NoReturn, Sequence, TypeVar
@@ -41,6 +42,7 @@ from ..core.models import (
     TickerInfo,
     normalize_symbol,
 )
+from ..core.search import SymbolMatch, merge_matches, normalize_limit, normalize_query
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +67,14 @@ class AggregatorService(FinanceService, StockDataSource):
         *,
         policy: FallbackPolicy | None = None,
         name: str = "aggregator",
+        search_timeout_seconds: float = 8.0,
     ) -> None:
         self._providers = tuple(providers)
         self._policy = policy or FallbackPolicy()
         self._name = name
+        self._search_timeout = search_timeout_seconds
+        self._search_pool: ThreadPoolExecutor | None = None
+        self._pool_lock = threading.Lock()
 
     @property
     def name(self) -> str:
@@ -132,6 +138,45 @@ class AggregatorService(FinanceService, StockDataSource):
             return history
         self._raise_no_data(what, attempts)
 
+    def search_symbols(self, query: str, limit: int = 10) -> list[SymbolMatch]:
+        """Ask every search-capable provider in parallel, then merge and re-rank (nearest first).
+
+        Providers that fail or exceed the time budget are skipped; only when none answers is
+        ProviderUnavailableError raised.
+        """
+        normalized = normalize_query(query)
+        limit = normalize_limit(limit)
+        searchable = [p for p in self._providers if p.supports_search and p.is_available()]
+        if not searchable:
+            raise ProviderUnavailableError("No available data provider supports symbol search")
+
+        pool = self._executor()
+        futures = {pool.submit(p.search_symbols, normalized, limit): p for p in searchable}
+        done, pending = wait(futures, timeout=self._search_timeout)
+        results: dict[str, list[SymbolMatch]] = {}
+        failures: list[str] = []
+        for future in done:
+            provider = futures[future]
+            try:
+                results[provider.name] = future.result()
+            except Exception as exc:  # noqa: BLE001 - one failing provider must not break search
+                failures.append(f"{provider.name}: {exc}")
+        failures += [f"{futures[f].name}: timed out" for f in pending]
+        if failures:
+            logger.info("search %r: skipped %s", normalized, "; ".join(failures))
+        if not results:
+            raise ProviderUnavailableError(f"Symbol search failed ({'; '.join(failures)})")
+        ordered = [results[p.name] for p in searchable if p.name in results]
+        return merge_matches(normalized, ordered, limit)
+
+    def _executor(self) -> ThreadPoolExecutor:
+        with self._pool_lock:
+            if self._search_pool is None:
+                self._search_pool = ThreadPoolExecutor(
+                    max_workers=max(2, 2 * len(self._providers)), thread_name_prefix="search"
+                )
+            return self._search_pool
+
     # ---- FinanceService --------------------------------------------------------------------
 
     def check_status(self) -> ServiceStatus:
@@ -151,6 +196,10 @@ class AggregatorService(FinanceService, StockDataSource):
         )
 
     def close(self) -> None:
+        with self._pool_lock:
+            if self._search_pool is not None:
+                self._search_pool.shutdown(wait=False, cancel_futures=True)
+                self._search_pool = None
         for provider in self._providers:
             try:
                 provider.close()

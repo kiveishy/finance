@@ -51,6 +51,10 @@ class LoggingConfig:
     max_bytes: int = 5 * 1024 * 1024
     backup_count: int = 5
 
+    @classmethod
+    def from_mapping(cls, section: Mapping[str, Any], base_dir: Path) -> "LoggingConfig":
+        return _parse_logging(section, base_dir)
+
 
 @dataclass(frozen=True)
 class ServerConfig:
