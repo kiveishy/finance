@@ -1,29 +1,13 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# NYSE ticker sync - prepares the environment via run.sh, then runs sync_nyse.py with the given arguments.
+# Uses the same YAHOODB_* environment overrides as run.sh.
+set -euo pipefail
 
-# NYSE Ticker Sync Script
-# This script runs the NYSE ticker synchronization
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+YAHOODB_VENV="${YAHOODB_VENV:-$APP_DIR/.venv-linux}"
+export YAHOODB_VENV
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
-VENV_PYTHON="$PROJECT_ROOT/yahoodb/bin/python"
+"$APP_DIR/run.sh" --setup-only
 
-# Check if virtual environment exists
-if [ ! -f "$VENV_PYTHON" ]; then
-    echo "Error: Virtual environment not found at $VENV_PYTHON"
-    echo "Please create the virtual environment first."
-    exit 1
-fi
-
-# Change to script directory
-cd "$SCRIPT_DIR"
-
-# Run the NYSE sync script with any passed arguments
-echo "╔═══════════════════════════════════════════════════════════╗"
-echo "║           NYSE Ticker Sync Script v0.0.0.6                ║"
-echo "║   Download and sync NYSE tickers to local database        ║"
-echo "╚═══════════════════════════════════════════════════════════╝"
-echo ""
-echo "Using Python: $VENV_PYTHON"
-echo ""
-
-"$VENV_PYTHON" sync_nyse.py "$@"
+cd "$APP_DIR"
+exec "$YAHOODB_VENV/bin/python" "$APP_DIR/sync_nyse.py" "$@"

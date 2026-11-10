@@ -49,46 +49,41 @@ This service provides:
 
 ### Prerequisites
 
-- Python 3.8 or higher
-- pip (Python package installer)
-- Virtual environment (yahoodb)
+- Python 3.10 or higher (Debian/Ubuntu: `python3-venv` recommended; without it `run.sh` bootstraps pip via get-pip.py)
 
 ### Installation
 
-1. **Navigate to the project directory:**
-   ```bash
-   cd apps/0.0.0.6
-   ```
+The run scripts create the virtual environment and install/validate the dependencies themselves.
+The venv lives next to the app: `.venv-linux` on Linux/macOS and `.venv-windows` on Windows.
+The scripts only call pip when a requirement is missing or `requirements.txt` changed. A venv
+that was moved or renamed is recreated automatically.
 
-2. **Activate the virtual environment:**
-   ```bash
-   source ../../yahoodb/bin/activate
-   ```
+```bash
+./run.sh --setup-only        # Linux/macOS: prepare the environment only
+```
 
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bat
+run.cmd --setup-only         :: Windows (uses ..\..\..\..\python\3.14\python.exe when present)
+```
 
-4. **Configure the service:**
-   
-   Edit `config.json` to customize:
-   - Database file path
-   - Yahoo Finance parameters
-   - Web server settings (host, port)
+| Environment variable | Default | Purpose |
+|----------------------|---------|---------|
+| `YAHOODB_PYTHON` | `python3` (Windows: the shared Python 3.14, else `python`) | Interpreter used to create the venv |
+| `YAHOODB_VENV` | `.venv-linux` / `.venv-windows` | Venv directory, e.g. a native-filesystem path under WSL |
+| `YAHOODB_REQUIREMENTS` | `requirements.txt` | Requirements file |
+
+Configure the service by editing `config.json`:
+- Database file path
+- Yahoo Finance parameters
+- Web server settings (host, port)
 
 ## Usage Instructions
 
 ### Start the Web Application
 
 ```bash
-python main.py
-```
-
-Or use the run script:
-
-```bash
-./run.sh
+./run.sh          # Linux/macOS
+run.cmd           # Windows
 ```
 
 The web dashboard will be available at: `http://localhost:5000`
@@ -270,8 +265,11 @@ curl -X POST http://localhost:5000/api/sync/start
 ├── sync_nyse.py         # NYSE and NYSE Arca ticker synchronization script
 ├── config.json          # Application configuration
 ├── requirements.txt     # Python dependencies
-├── run.sh               # Shell script to run the web application
-├── run_nyse_sync.sh     # Shell script to run NYSE/NYSE Arca sync
+├── run.sh / run.cmd     # Run the web application (creates/validates the venv)
+├── run_nyse_sync.sh / .bat  # Run NYSE/NYSE Arca sync (same venv)
+├── service.sh           # systemd daemon management (install/start/stop/...)
+├── tools/
+│   └── ensure_env.py    # Dependency validation used by the run scripts
 ├── README.md            # This file
 ├── API.md               # API documentation
 ├── templates/

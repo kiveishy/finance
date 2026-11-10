@@ -3,7 +3,7 @@ api-test.py - Simple test for the YahooDB API client.
 
 Reads TSLA ticker info from the running Yahoo-DB Flask application.
 Make sure the server is running before executing this script:
-    run.bat   (Windows)
+    run.cmd   (Windows)
     ./run.sh  (Linux / macOS)
 """
 

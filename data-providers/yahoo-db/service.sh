@@ -45,12 +45,14 @@ cmd_install() {
     echo -e "${YELLOW}Installing ${SERVICE_NAME} service...${NC}"
 
     # Generate service file with correct paths
-    PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
-    VENV_PYTHON="$PROJECT_ROOT/yahoodb/bin/python"
+    VENV_PYTHON="${YAHOODB_VENV:-$SCRIPT_DIR/.venv-linux}/bin/python"
 
-    if [[ ! -f "$VENV_PYTHON" ]]; then
+    echo -e "${YELLOW}Validating virtual environment as ${SUDO_USER:-$CURRENT_USER}...${NC}"
+    sudo -u "${SUDO_USER:-$CURRENT_USER}" -H env YAHOODB_VENV="${YAHOODB_VENV:-}" "$SCRIPT_DIR/run.sh" --setup-only
+
+    if [[ ! -x "$VENV_PYTHON" ]]; then
         echo -e "${RED}Error: Virtual environment not found at $VENV_PYTHON${NC}"
-        echo "Please run run.sh first to create the virtual environment."
+        echo "Run ./run.sh --setup-only to create it."
         exit 1
     fi
 
