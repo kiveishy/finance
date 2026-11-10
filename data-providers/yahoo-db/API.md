@@ -353,6 +353,48 @@ curl "http://localhost:5000/api/search?q=apple&limit=5"
 
 ---
 
+### 9. Stock Splits of a Ticker
+
+**Endpoint:** `GET /api/ticker/{symbol}/splits`
+
+Splits already taken care of, and the result of the ticker's full split check (`null` until the
+first update after upgrading).
+
+**Response:**
+```json
+{
+    "status": "success",
+    "symbol": "ETHA",
+    "check": {"result": "redownloaded", "mismatched_bars": 542, "checked_at": "2026-11-10 21:01:41"},
+    "data": [{"split_date": "2026-10-06", "ratio": 0.3333, "action": "redownloaded", "handled_at": "2026-11-10 21:01:41"}]
+}
+```
+
+### 10. Check a Ticker for Splits Now
+
+**Endpoint:** `POST /api/ticker/{symbol}/check-splits`
+
+Downloads the ticker's history from its first stored day. If it contains a split that is not
+registered yet and the stored rows differ, the stored history is replaced (one transaction).
+`?force=1` re-downloads even without a new split.
+
+**Response:**
+```json
+{"status": "success", "symbol": "ETHA", "action": "redownloaded", "records": 579, "mismatched_bars": 542,
+ "splits": [{"date": "2026-10-06", "ratio": 0.3333}]}
+```
+
+`action` is `redownloaded`, `verified` (split already reflected in the stored data), `updated`
+(no new split) or `no_history`.
+
+**Error Responses:** 404 unknown ticker, 503 Yahoo Finance history unavailable.
+
+```bash
+curl -X POST http://localhost:5000/api/ticker/ETHA/check-splits
+```
+
+---
+
 ## HTTP Status Codes
 
 | Code | Description |

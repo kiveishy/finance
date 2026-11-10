@@ -21,6 +21,7 @@ from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 
 from database import DatabaseManager
+from split_check import SplitChecker
 from yahoo_finance import YahooFinanceClient
 
 # Ensure UTF-8 output on all platforms (important for Windows cp1252 console)
@@ -81,6 +82,7 @@ class StockDataService:
         )
         
         self.request_delay = self.config['yahoo_finance'].get('request_delay', 0.3)
+        self.splits = SplitChecker(self.db, self.yahoo_client)
         
         self.tickers_file_path = self._resolve_path(
             self.config['files']['nasdaq_tickers']
@@ -329,6 +331,7 @@ class StockDataService:
                 records_count = 0
                 if historical_data:
                     records_count = self.db.insert_historical_data(symbol, historical_data)
+                    self.splits.register_initial(symbol, historical_data)
                 
                 # Record update history
                 self.db.insert_update_history(
@@ -375,15 +378,25 @@ class StockDataService:
                 self.sync_progress["current_ticker"] = symbol
                 
                 last_date = self.db.get_last_date_for_ticker(symbol)
-                logger.info(f"Updating ticker {i}/{total}: {symbol} (last date in DB: {last_date or 'none'})")
+                first_date = self.db.get_first_date_for_ticker(symbol)
+                # One-time check over the whole stored life: download from the first stored day.
+                full_check = first_date is not None and self.splits.needs_full_check(symbol)
+                logger.info(f"Updating ticker {i}/{total}: {symbol} (last date in DB: {last_date or 'none'}"
+                            f"{', full split check' if full_check else ''})")
                 
-                # Always fetch full history and merge with existing data
-                # The DB uses ON CONFLICT DO UPDATE to handle duplicates
-                historical_data = self.yahoo_client.get_historical_data(symbol)
+                if full_check:
+                    historical_data = self.yahoo_client.get_historical_data(symbol, start_date=first_date)
+                elif last_date and (datetime.now() - datetime.strptime(last_date, '%Y-%m-%d')).days > 25:
+                    # Not updated for a while: cover the whole gap so no split in it is missed.
+                    gap_start = (datetime.strptime(last_date, '%Y-%m-%d') - timedelta(days=5)).strftime('%Y-%m-%d')
+                    historical_data = self.yahoo_client.get_historical_data(symbol, start_date=gap_start)
+                else:
+                    historical_data = self.yahoo_client.get_historical_data(symbol)
                 
                 records_count = 0
                 if historical_data:
-                    records_count = self.db.insert_historical_data(symbol, historical_data)
+                    result = self.splits.store_update(symbol, historical_data, covers_history=full_check)
+                    records_count = result['records']
                 
                 # Update ticker info
                 ticker_info = self.yahoo_client.get_ticker_info(symbol)
@@ -447,6 +460,7 @@ class StockDataService:
             records_count = 0
             if historical_data:
                 records_count = self.db.insert_historical_data(symbol, historical_data)
+                self.splits.register_initial(symbol, historical_data)
                 
             # Record update history
             self.db.insert_update_history(
@@ -690,6 +704,42 @@ def api_get_ticker_updates(symbol: str):
         })
     except Exception as e:
         return jsonify({"error": str(e), "status": "error"}), 500
+
+
+@app.route('/api/ticker/<symbol>/splits', methods=['GET'])
+def api_get_ticker_splits(symbol: str):
+    """Splits already taken care of for a ticker, and its full split check (if done)."""
+    symbol = symbol.upper()
+    if not service.db.ticker_exists(symbol):
+        return jsonify({"error": f"Ticker {symbol} not found", "status": "error"}), 404
+    return jsonify({
+        "status": "success",
+        "symbol": symbol,
+        "check": service.db.get_split_check(symbol),
+        "data": service.db.get_split_events(symbol),
+    })
+
+
+@app.route('/api/ticker/<symbol>/check-splits', methods=['POST'])
+def api_check_ticker_splits(symbol: str):
+    """
+    Check a ticker's whole stored history for splits now and re-download it if needed.
+
+    Query parameters:
+        - force: "1" re-downloads the history even when no new split is found
+    """
+    symbol = symbol.upper()
+    if not service.db.ticker_exists(symbol):
+        return jsonify({"error": f"Ticker {symbol} not found", "status": "error"}), 404
+    try:
+        result = service.splits.check(symbol, force=request.args.get('force') == '1')
+    except Exception as e:
+        logger.error(f"Split check failed for {symbol}: {e}")
+        return jsonify({"error": "Split check failed", "status": "error"}), 500
+    if result['action'] == 'download_failed':
+        return jsonify({"error": "Yahoo Finance history unavailable", "status": "error"}), 503
+    return jsonify({"status": "success", "symbol": symbol, **result,
+                    "splits": [{"date": d, "ratio": r} for d, r in result['splits']]})
 
 
 def main():

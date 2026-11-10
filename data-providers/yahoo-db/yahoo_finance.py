@@ -284,7 +284,8 @@ class YahooFinanceClient:
                 
                 if start_date:
                     if end_date is None:
-                        end_date = datetime.now().strftime('%Y-%m-%d')
+                        # yfinance's end is exclusive: tomorrow includes today's bar
+                        end_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
                         
                     history = ticker.history(
                         start=start_date,
@@ -308,6 +309,7 @@ class YahooFinanceClient:
                 
                 records = []
                 for date, row in history.iterrows():
+                    split = row.get('Stock Splits')
                     records.append({
                         'date': date.strftime('%Y-%m-%d'),
                         'open': row.get('Open'),
@@ -315,7 +317,9 @@ class YahooFinanceClient:
                         'high': row.get('High'),
                         'low': row.get('Low'),
                         'volume': int(row.get('Volume', 0)) if pd.notna(row.get('Volume')) else 0,
-                        'adj_close': row.get('Close')
+                        'adj_close': row.get('Close'),
+                        # Split ratio on its effective day (0 otherwise); used by the split check, not stored.
+                        'split': float(split) if pd.notna(split) and split else 0.0,
                     })
                 
                 logger.info(f"Retrieved {len(records)} historical records for {symbol}")

@@ -226,6 +226,8 @@ The connection handling uses only the Python standard library (`sqlite3`, `threa
 | GET | `/api/ticker/{symbol}` | Get ticker details |
 | GET | `/api/ticker/{symbol}/history` | Get historical data |
 | GET | `/api/search?q=apple&limit=10` | Search tickers by symbol or company name |
+| GET | `/api/ticker/{symbol}/splits` | Splits already taken care of, and the ticker's full split check |
+| POST | `/api/ticker/{symbol}/check-splits[?force=1]` | Check a ticker for splits now and re-download its history if needed |
 | POST | `/api/ticker` | Add new ticker |
 | POST | `/api/sync/start` | Start synchronization |
 | POST | `/api/sync/stop` | Stop synchronization |
@@ -262,6 +264,8 @@ curl -X POST http://localhost:5000/api/sync/start
 ├── main.py              # Flask application and service logic
 ├── database.py          # SQLite database operations
 ├── yahoo_finance.py     # Yahoo Finance API client (NASDAQ, NYSE & NYSE Arca support)
+├── split_check.py       # Stock split detection and history re-download
+├── tests/               # pytest tests (python -m pytest tests -q)
 ├── sync_nyse.py         # NYSE and NYSE Arca ticker synchronization script
 ├── config.json          # Application configuration
 ├── requirements.txt     # Python dependencies
@@ -315,6 +319,26 @@ curl -X POST http://localhost:5000/api/sync/start
 | volume | INTEGER | Trading volume |
 | adj_close | REAL | Adjusted close price |
 | created_at | TIMESTAMP | Record creation timestamp |
+
+### Stock splits (`split_events`, `split_checks`)
+
+Yahoo's history is split-adjusted as of the moment it is downloaded. The daily update only
+re-downloads the last month, so after a split the older stored rows stayed on the old price scale
+and the chart jumped. For example, ETHA (1:3 on 2026-10-06) was stored at ⅓ of the price before
+2026-09-22. Every Yahoo download also carries the split events, and `split_check.py` uses them:
+
+| When | What happens |
+|------|--------------|
+| First update of a ticker after upgrading | One **full check over its whole stored life**: history is downloaded from the first stored day. If it contains a split, stored rows that differ from Yahoo's adjusted prices are replaced in one transaction. If nothing differs, the split is only marked `verified`. The ticker gets a row in `split_checks`, so this runs once per ticker |
+| Daily update | A split in the downloaded window that isn't in `split_events` yet triggers a full re-download from the first stored day. If the update was more than 25 days ago, the window covers the whole gap |
+| New ticker / manual add | Splits in the first download are registered as handled (`initial_download`). That data is already adjusted |
+| `POST /api/ticker/{symbol}/check-splits` | The same full check on demand; `?force=1` re-downloads even without a new split |
+
+`split_events` (ticker, split_date, ratio, action, handled_at) is the record that a split was taken
+care of, so the next day's update does not fix it again. `action` is `redownloaded`, `verified`,
+`before_history` or `initial_download`. When a re-download fails, the split stays unregistered
+and is retried on the next update. Every re-download is also logged in `update_history` as
+`split_redownload`.
 
 ## Dependencies
 

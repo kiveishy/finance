@@ -216,6 +216,28 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_update_history_date 
                 ON update_history(updated_at)
             """)
+
+            # Stock splits already taken care of (history re-downloaded or verified as adjusted)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS split_events (
+                    ticker_symbol TEXT NOT NULL,
+                    split_date DATE NOT NULL,
+                    ratio REAL NOT NULL,
+                    action TEXT NOT NULL,
+                    handled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (ticker_symbol, split_date)
+                )
+            """)
+
+            # One full split check over the stored history per ticker
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS split_checks (
+                    ticker_symbol TEXT PRIMARY KEY,
+                    result TEXT NOT NULL,
+                    mismatched_bars INTEGER DEFAULT 0,
+                    checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             
             self.connection.commit()
             logger.info("Database tables initialized successfully")
@@ -361,6 +383,104 @@ class DatabaseManager:
             logger.error(f"Failed to get last date for {ticker_symbol}: {e}")
             return None
     
+    @_with_retry
+    def get_first_date_for_ticker(self, ticker_symbol: str) -> Optional[str]:
+        """Get the first recorded date for a ticker, or None if no data exists."""
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT MIN(date) AS first_date FROM historical_data WHERE ticker_symbol = ?",
+                       (ticker_symbol,))
+        row = cursor.fetchone()
+        return row['first_date'] if row and row['first_date'] else None
+
+    @_with_retry
+    def get_closes(self, ticker_symbol: str) -> Dict[str, float]:
+        """Stored close per date for a ticker."""
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT date, close_price FROM historical_data WHERE ticker_symbol = ? AND close_price IS NOT NULL",
+                       (ticker_symbol,))
+        return {row['date']: row['close_price'] for row in cursor.fetchall()}
+
+    @_with_retry
+    def replace_historical_data(self, ticker_symbol: str, data: List[Dict[str, Any]]) -> int:
+        """
+        Atomically replace the stored history between the first and last date in `data` with `data`.
+
+        Stored rows outside that range (older than Yahoo's history, or newer) are kept. On any
+        error the old rows stay untouched.
+        """
+        if not data:
+            return 0
+        first_date = min(record['date'] for record in data)
+        last_date = max(record['date'] for record in data)
+        with self.connection:  # one transaction: commit on success, rollback on error
+            self.connection.execute(
+                "DELETE FROM historical_data WHERE ticker_symbol = ? AND date BETWEEN ? AND ?",
+                (ticker_symbol, first_date, last_date))
+            self.connection.executemany("""
+                INSERT INTO historical_data (
+                    ticker_symbol, date, open_price, close_price,
+                    high_price, low_price, volume, adj_close
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, [
+                (ticker_symbol, r.get('date'), r.get('open'), r.get('close'),
+                 r.get('high'), r.get('low'), r.get('volume'), r.get('adj_close'))
+                for r in data
+            ])
+        logger.info(f"Replaced history of {ticker_symbol} up to {last_date} with {len(data)} records")
+        return len(data)
+
+    @_with_retry
+    def get_split_dates(self, ticker_symbol: str) -> set:
+        """Dates of splits already taken care of for a ticker."""
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT split_date FROM split_events WHERE ticker_symbol = ?", (ticker_symbol,))
+        return {row['split_date'] for row in cursor.fetchall()}
+
+    @_with_retry
+    def record_split_events(self, ticker_symbol: str, splits: List[tuple], action: str) -> None:
+        """Register splits as handled; `splits` holds (date 'YYYY-MM-DD', ratio)."""
+        if not splits:
+            return
+        with self.connection:
+            self.connection.executemany("""
+                INSERT INTO split_events (ticker_symbol, split_date, ratio, action)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(ticker_symbol, split_date) DO NOTHING
+            """, [(ticker_symbol, day, ratio, action) for day, ratio in splits])
+
+    @_with_retry
+    def has_split_check(self, ticker_symbol: str) -> bool:
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT 1 FROM split_checks WHERE ticker_symbol = ?", (ticker_symbol,))
+        return cursor.fetchone() is not None
+
+    @_with_retry
+    def record_split_check(self, ticker_symbol: str, result: str, mismatched_bars: int = 0) -> None:
+        with self.connection:
+            self.connection.execute("""
+                INSERT INTO split_checks (ticker_symbol, result, mismatched_bars, checked_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(ticker_symbol) DO UPDATE SET
+                    result = excluded.result,
+                    mismatched_bars = excluded.mismatched_bars,
+                    checked_at = CURRENT_TIMESTAMP
+            """, (ticker_symbol, result, mismatched_bars))
+
+    @_with_retry
+    def get_split_check(self, ticker_symbol: str) -> Optional[Dict[str, Any]]:
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT result, mismatched_bars, checked_at FROM split_checks WHERE ticker_symbol = ?",
+                       (ticker_symbol,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    @_with_retry
+    def get_split_events(self, ticker_symbol: str) -> List[Dict[str, Any]]:
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT split_date, ratio, action, handled_at FROM split_events "
+                       "WHERE ticker_symbol = ? ORDER BY split_date", (ticker_symbol,))
+        return [dict(row) for row in cursor.fetchall()]
+
     @_with_retry
     def get_all_tickers(self) -> List[str]:
         """
