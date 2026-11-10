@@ -68,13 +68,14 @@ def render_ticker_info(info: TickerInfo, *, description_width: int = 300) -> str
 def render_history(history: PriceHistory, *, limit: int = 0) -> str:
     bars = history.bars[-limit:] if limit > 0 else history.bars
     table = format_table(
-        ["Date", "Open", "High", "Low", "Close", "Adj Close", "Volume"],
-        [(b.date.isoformat(), b.open, b.high, b.low, b.close, b.adj_close, b.volume) for b in bars],
-        align_right=[False] + [True] * 6,
+        ["Date", "Open", "High", "Low", "Close", "Adj Close", "Volume", "Source"],
+        [(b.date.isoformat(), b.open, b.high, b.low, b.close, b.adj_close, b.volume, b.source) for b in bars],
+        align_right=[False] + [True] * 6 + [False],
     )
+    sources = ", ".join(f"{name} ({count} bars)" for name, count in history.source_counts.items())
     header = (
         f"  {history.symbol} {history.date_range}: {len(history.bars)} bars "
-        f"({history.first_date} .. {history.last_date}), source: {history.source}"
+        f"({history.first_date} .. {history.last_date}), sources: {sources}"
     )
     if len(bars) < len(history.bars):
         header += f"\n  showing last {len(bars)} rows (use --limit 0 to show all)"

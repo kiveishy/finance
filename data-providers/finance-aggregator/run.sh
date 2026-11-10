@@ -38,21 +38,40 @@ bootstrap_pip_venv() {
     return $status
 }
 
-if [[ ! -x "$FINANCE_VENV/bin/python" ]]; then
+VENV_MARKER="$FINANCE_VENV/.finance-aggregator-location"
+
+# venvs hard-code their own path: a moved/renamed or incomplete venv must be recreated.
+venv_valid() {
+    [[ -x "$FINANCE_VENV/bin/python" && -f "$FINANCE_VENV/pyvenv.cfg" && -f "$VENV_MARKER" ]] \
+        && [[ "$(cat "$VENV_MARKER")" == "$FINANCE_VENV" ]]
+}
+
+if ! venv_valid; then
+    if [[ -e "$FINANCE_VENV" ]]; then
+        if [[ -f "$FINANCE_VENV/pyvenv.cfg" || -e "$FINANCE_VENV/bin/python" ]]; then
+            echo "[run] Virtual environment $FINANCE_VENV is incomplete or was moved, recreating it"
+            # Move aside first: recreating under the same name right after deletion is unreliable on shared folders.
+            venv_old="$FINANCE_VENV.broken-$$"
+            mv -- "$FINANCE_VENV" "$venv_old"
+            rm -rf -- "$venv_old" || true
+        else
+            echo "[run] ERROR: $FINANCE_VENV exists but is not a virtual environment. Remove it or set FINANCE_VENV." >&2
+            exit 1
+        fi
+    fi
     echo "[run] Creating virtual environment $FINANCE_VENV"
     echo "[run] Base interpreter: $FINANCE_PYTHON"
-    venv_existed=0
-    [[ -e "$FINANCE_VENV" ]] && venv_existed=1
     if ! "$FINANCE_PYTHON" -m venv "$FINANCE_VENV" >/dev/null 2>&1; then
-        [[ $venv_existed -eq 0 ]] && rm -rf -- "$FINANCE_VENV"
+        rm -rf -- "$FINANCE_VENV"
         if ! bootstrap_pip_venv; then
-            [[ $venv_existed -eq 0 ]] && rm -rf -- "$FINANCE_VENV"
+            rm -rf -- "$FINANCE_VENV"
             echo "[run] ERROR: could not create the virtual environment." >&2
             echo "[run]        Debian/Ubuntu: sudo apt install python3-venv" >&2
             echo "[run]        Or set FINANCE_PYTHON to another Python 3.10+ interpreter." >&2
             exit 1
         fi
     fi
+    echo "$FINANCE_VENV" > "$VENV_MARKER"
 fi
 
 # shellcheck disable=SC1091

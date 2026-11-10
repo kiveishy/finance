@@ -111,8 +111,8 @@ cmd_unit() {
 cmd_install() {
     require_root
     parse_install_args "$@"
-    if [[ "$MODE" == "source" && ! -x "$VENV_PYTHON" ]]; then
-        info "Preparing virtual environment as ${SERVICE_USER}..."
+    if [[ "$MODE" == "source" ]]; then
+        info "Validating virtual environment as ${SERVICE_USER}..."
         sudo -u "$SERVICE_USER" -H "$APP_DIR/run.sh" --setup-only
     fi
     [[ "$MODE" == "binary" || -x "$VENV_PYTHON" ]] || fail "virtual environment missing: $VENV_PYTHON"

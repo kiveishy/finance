@@ -80,7 +80,7 @@ def test_read_prints_info_and_history_with_source(out: io.StringIO) -> None:
     CommandDispatcher(ctx).dispatch(["read", "msft", "--days", "3"])
     text = out.getvalue()
     assert "MSFT from api" in text
-    assert "source: api" in text
+    assert "sources: api (4 bars)" in text
     assert (date.today() - timedelta(days=3)).isoformat() in text
 
 
@@ -91,6 +91,8 @@ def test_read_json_output(out: io.StringIO) -> None:
     assert code is ExitCode.OK
     assert payload["info"]["symbol"] == "AAPL"
     assert payload["history"]["count"] == 3
+    assert {bar["source"] for bar in payload["history"]["data"]} == {"api"}
+    assert payload["history"]["sources"] == {"api": 3}
 
 
 def test_read_history_only_and_limit(out: io.StringIO) -> None:

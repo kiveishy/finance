@@ -85,8 +85,10 @@ class FinanceService(ABC):             # long-lived services (aggregation, analy
 
 `AggregatorService` implements both `FinanceService` and `StockDataSource` (composite pattern).
 Consumers therefore cannot tell whether they hold one provider or a whole chain. Every result has a
-`source` field that names the provider that answered. It is there for diagnostics only; consumers
-never need to branch on it.
+`source` field that names the provider that answered. Each price bar also carries its own
+`source`, because one history can combine several providers (see
+[Fallback mechanism](#fallback-mechanism)). These fields are there for transparency; consumers
+never need to branch on them.
 
 ### Error contract
 
@@ -125,11 +127,24 @@ For every request, `AggregatorService` does the following:
    - success → returns the result immediately; later providers are not called
    - `DataNotFoundError`, `ProviderUnavailableError`, `ProviderError`, or any unexpected
      exception → records the attempt and moves on to the next provider
-5. **History freshness.** Suppose a provider returns history whose last bar is more than
-   `aggregator.history_max_staleness_days` days before the requested end date. For example,
-   yahoo-db last synced two weeks ago. That result is kept as a *candidate* and the next
-   provider is tried. If no later provider does better, the candidate is returned. Set the
-   option to `null` to disable the check.
+5. **Price history merging (gap filling).** Suppose a provider's history ends more than
+   `aggregator.history_max_staleness_days` days before the requested end date, for example
+   because yahoo-db has not synced for two weeks. Its bars are **kept**, and only the missing
+   tail (the day after its last bar through the requested end) is requested from the next
+   provider. Bars from a higher-priority provider are never overwritten. This repeats down the
+   chain until the history is fresh or the chain ends; whatever was collected is then returned.
+   - Every bar is tagged with the provider that supplied it: `PriceBar.source`, the `Source`
+     column in the CLI, and the bar's `source` in JSON.
+   - The history's `source` lists the contributing providers, e.g. `yahoo-db-api+yahoo-finance`.
+   - `sources` gives the number of bars per provider.
+   - Set the option to `null` to disable gap filling; the first provider with data then wins.
+
+   ```text
+   AAPL 2026-10-22..2026-11-10: 13 bars, sources: yahoo-db-api (5 bars), yahoo-finance (8 bars)
+   Date        ...  Close   Source
+   2026-10-28  ...  343.83  yahoo-db-api
+   2026-10-29  ...  348.91  yahoo-finance
+   ```
 6. If nobody returned data:
    - at least one provider answered "not found" → `DataNotFoundError`
    - otherwise → `ProviderUnavailableError`
@@ -156,7 +171,7 @@ resolved against the directory of the config file.
      "options": {"timeout_seconds": 15, "cache_dir": "./cache/yfinance",
                  "probe_symbol": "SPY", "proxy": null}}
   ],
-  "aggregator": {"history_max_staleness_days": 5}, // null disables the freshness fallback
+  "aggregator": {"history_max_staleness_days": 5}, // null disables gap filling from lower-priority providers
   "server":     {"host": "127.0.0.1", "port": 5100, "api_key": null},
   "logging":    {"level": "INFO", "file": "./logs/finance-aggregator.log",
                  "max_bytes": 5242880, "backup_count": 5},
@@ -211,7 +226,9 @@ pass `--log-level`.
 
 ## HTTP API (`serve`)
 
-This is a read-only JSON API with the same response shape as yahoo-db, plus a `source` field.
+This is a read-only JSON API with the same response shape as yahoo-db. Responses also include a
+`source` field. History responses add a `sources` bar count per provider, and each bar carries
+its own `source`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -393,7 +410,7 @@ lists it automatically, and parse errors never terminate the shell.
 
 | Test file | What it covers |
 |-----------|----------------|
-| `test_aggregator.py` | Fallback priority, skip/not-found/unavailable/error handling, how the final error is classified, the history freshness fallback, status aggregation |
+| `test_aggregator.py` | Fallback priority, skip/not-found/unavailable/error handling, how the final error is classified, history merging (tail gap filling, per-bar source tags), status aggregation |
 | `test_local_db_provider.py` | Runs against a DB created by **yahoo-db's own `DatabaseManager`** (schema contract test). Also covers read-only enforcement and missing vs. corrupt files |
 | `test_yahoo_db_api_provider.py` | Runs the **real yahoo-db client** against a stub yahoo-db server: 404/500/503/connection refused |
 | `test_yahoo_finance_provider.py` | yfinance exception classification and data mapping |
@@ -414,7 +431,7 @@ lists it automatically, and parse errors never terminate the shell.
 |---------|---------------|
 | `yahoo-db-local UNAVAILABLE database file not accessible` | Expected when the DB is not on this machine; the chain falls through to the API. Otherwise set `db_path` |
 | `yahoo-db-api ... misconfigured: yahoo-db source 'yahoodb-api.py' not found` | Set `client_source_dir` to the yahoo-db folder (executables use their bundled copy) |
-| History comes from `yahoo-finance` although the API has the ticker | The yahoo-db data is older than `history_max_staleness_days` (check `status` → last sync) |
+| Recent bars are tagged `yahoo-finance` although the API has the ticker | Expected: yahoo-db's data ends more than `history_max_staleness_days` before the requested end (check `status` → last sync), so the missing tail was filled from Yahoo Finance |
 | Linux: `ensurepip is not available` | Install `python3-venv` (`sudo apt install python3-venv`), or let `run.sh` bootstrap pip through `get-pip.py` |
 | WSL: `[Errno 5] Input/output error` during pip install under `/mnt/c/...` | The venv is on a Windows/shared drvfs mount. Use a Linux-native location: `FINANCE_VENV=$HOME/.venvs/finance-aggregator ./build.sh` |
 | `Address already in use` on `serve` | Another instance or orphaned process holds the port; change `server.port` or stop it |

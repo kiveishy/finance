@@ -102,22 +102,61 @@ class TestFailureClassification:
         assert provider.calls == []
 
 
-class TestHistoryFreshness:
+class TestHistoryMerge:
     @staticmethod
     def stale(symbol: str, date_range: DateRange) -> PriceHistory:
         return PriceHistory(symbol, date_range, make_bars(date_range.start, 2))  # ends 8 days early
 
-    def test_stale_history_falls_back_to_fresher_provider(self) -> None:
+    def test_stale_history_is_kept_and_only_the_missing_tail_is_filled(self) -> None:
         api, yahoo = FakeProvider("api", history=self.stale), FakeProvider("yahoo")
         history = chain(api, yahoo).get_price_history("AAPL", RANGE)
-        assert history.source == "yahoo"
-        assert history.last_date == RANGE.end
 
-    def test_stale_history_returned_when_nobody_has_better(self) -> None:
+        assert yahoo.history_requests == [DateRange(date(2026, 1, 3), RANGE.end)]
+        assert history.source == "api+yahoo"
+        assert [b.source for b in history.bars] == ["api"] * 2 + ["yahoo"] * 8
+        assert [b.date for b in history.bars] == [RANGE.start + timedelta(days=i) for i in range(10)]
+        assert history.source_counts == {"api": 2, "yahoo": 8}
+
+    def test_three_providers_each_fill_the_next_gap(self) -> None:
+        def partial(days: int):  # type: ignore[no-untyped-def]
+            return lambda s, r: PriceHistory(s, r, make_bars(r.start, days))
+
+        local = FakeProvider("local", history=partial(2))
+        api = FakeProvider("api", history=partial(1))
+        yahoo = FakeProvider("yahoo")
+        history = chain(local, api, yahoo).get_price_history("AAPL", RANGE)
+
+        assert history.source == "local+api+yahoo"
+        assert history.source_counts == {"local": 2, "api": 1, "yahoo": 7}
+        assert api.history_requests[0].start == date(2026, 1, 3)
+        assert yahoo.history_requests[0].start == date(2026, 1, 4)
+
+    def test_higher_priority_bars_win_over_overlapping_filler_bars(self) -> None:
+        # A filler that ignores the requested range must not overwrite existing bars.
+        def everything(symbol: str, _range: DateRange) -> PriceHistory:
+            return PriceHistory(symbol, RANGE, make_bars(RANGE.start, 10, price=999.0))
+
+        api, yahoo = FakeProvider("api", history=self.stale), FakeProvider("yahoo", history=everything)
+        history = chain(api, yahoo).get_price_history("AAPL", RANGE)
+        assert history.bars[0].source == "api" and history.bars[0].open == 100.0
+        assert history.bars[2].source == "yahoo" and len(history.bars) == 10
+
+    def test_stale_history_returned_when_nobody_can_fill(self) -> None:
         api, yahoo = FakeProvider("api", history=self.stale), FakeProvider("yahoo", history=unavailable())
         history = chain(api, yahoo).get_price_history("AAPL", RANGE)
         assert history.source == "api"
         assert history.last_date == RANGE.start + timedelta(days=1)
+
+    def test_filler_with_nothing_new_keeps_partial_history(self) -> None:
+        api, yahoo = FakeProvider("api", history=self.stale), FakeProvider("yahoo", history=not_found())
+        history = chain(api, yahoo).get_price_history("AAPL", RANGE)
+        assert history.source_counts == {"api": 2}
+
+    def test_fresh_history_does_not_call_lower_priority_providers(self) -> None:
+        api, yahoo = FakeProvider("api"), FakeProvider("yahoo")
+        history = chain(api, yahoo).get_price_history("AAPL", RANGE)
+        assert history.source == "api" and {b.source for b in history.bars} == {"api"}
+        assert yahoo.calls == []
 
     def test_freshness_check_can_be_disabled(self) -> None:
         api, yahoo = FakeProvider("api", history=self.stale), FakeProvider("yahoo")

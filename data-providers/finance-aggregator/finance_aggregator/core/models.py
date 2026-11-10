@@ -174,7 +174,10 @@ class TickerInfo:
 
 @dataclass(frozen=True, slots=True)
 class PriceBar:
-    """One OHLCV bar. `adj_close` follows yahoo-db semantics (split/dividend adjusted close)."""
+    """One OHLCV bar. `adj_close` follows yahoo-db semantics (split/dividend adjusted close).
+
+    `source` is the name of the provider that supplied this bar.
+    """
 
     date: date
     open: float | None
@@ -183,6 +186,7 @@ class PriceBar:
     close: float | None
     adj_close: float | None
     volume: int | None
+    source: str = ""
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "PriceBar":
@@ -194,7 +198,11 @@ class PriceBar:
             close=_to_float(data.get("close")),
             adj_close=_to_float(data.get("adj_close")),
             volume=_to_int(data.get("volume")),
+            source=str(data.get("source") or ""),
         )
+
+    def with_source(self, source: str) -> "PriceBar":
+        return replace(self, source=source)
 
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
@@ -204,7 +212,11 @@ class PriceBar:
 
 @dataclass(frozen=True, slots=True)
 class PriceHistory:
-    """Ordered price bars for one symbol within a requested range."""
+    """Ordered price bars for one symbol within a requested range.
+
+    Bars may come from several providers (see `PriceBar.source`); `source` then lists the
+    contributing providers in priority order, joined with "+".
+    """
 
     symbol: str
     date_range: DateRange
@@ -227,8 +239,18 @@ class PriceHistory:
     def last_date(self) -> date | None:
         return self.bars[-1].date if self.bars else None
 
+    @property
+    def source_counts(self) -> dict[str, int]:
+        """Number of bars per provider, in order of first appearance."""
+        counts: dict[str, int] = {}
+        for bar in self.bars:
+            counts[bar.source] = counts.get(bar.source, 0) + 1
+        return counts
+
     def with_source(self, source: str) -> "PriceHistory":
-        return replace(self, source=source)
+        """Set the history source and tag bars that do not carry a source yet."""
+        bars = tuple(bar if bar.source else bar.with_source(source) for bar in self.bars)
+        return replace(self, bars=bars, source=source)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -237,6 +259,7 @@ class PriceHistory:
             "end_date": self.date_range.end.isoformat(),
             "count": len(self.bars),
             "source": self.source,
+            "sources": self.source_counts,
             "data": [bar.to_dict() for bar in self.bars],
         }
 

@@ -43,6 +43,7 @@ class FakeProvider(DataProvider):
         self.available = available
         self.probe_behaviour = probe
         self.calls: list[str] = []
+        self.history_requests: list[DateRange] = []
         self.closed = False
 
     def is_available(self) -> bool:
@@ -66,6 +67,7 @@ class FakeProvider(DataProvider):
 
     def _fetch_price_history(self, symbol: str, date_range: DateRange) -> PriceHistory:
         self.calls.append(f"history:{symbol}")
+        self.history_requests.append(date_range)
         behaviour = self.history_behaviour
         if callable(behaviour) and not isinstance(behaviour, BaseException):
             return behaviour(symbol, date_range)
