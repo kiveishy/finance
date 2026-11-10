@@ -1,0 +1,50 @@
+{
+    "providers": [
+        {
+            "type": "yahoo_db_local",
+            "name": "yahoo-db-local",
+            "enabled": true,
+            "options": {
+                "db_path": "../data/stocks.db",
+                "timeout_seconds": 5
+            }
+        },
+        {
+            "type": "yahoo_db_api",
+            "name": "yahoo-db-api",
+            "enabled": true,
+            "options": {
+                "host": "187.124.178.83",
+                "port": 5000,
+                "timeout_seconds": 10,
+                "client_source_dir": "../yahoo-db"
+            }
+        },
+        {
+            "type": "yahoo_finance",
+            "name": "yahoo-finance",
+            "enabled": true,
+            "options": {
+                "timeout_seconds": 15,
+                "cache_dir": "./cache/yfinance",
+                "probe_symbol": "SPY",
+                "proxy": null
+            }
+        }
+    ],
+    "aggregator": {
+        "history_max_staleness_days": 5
+    },
+    "server": {
+        "host": "127.0.0.1",
+        "port": 5100,
+        "api_key": null
+    },
+    "logging": {
+        "level": "INFO",
+        "file": "./logs/finance-aggregator.log",
+        "max_bytes": 5242880,
+        "backup_count": 5
+    },
+    "plugins": []
+}

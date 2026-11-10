@@ -1,1 +1,7 @@
 *.log
+build/
+dist/
+cache/
+logs/
+.venv*/
+__pycache__/
