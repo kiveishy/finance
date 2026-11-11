@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>S&amp;P 500 Monitor</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="css/app.css">
+    <script type="module" src="js/app.js"></script>
+</head>
+<body>
+<header class="topbar">
+    <div class="brand">
+        <img src="favicon.svg" alt="" width="26" height="26">
+        <h1>S&amp;P 500 Monitor</h1>
+    </div>
+    <div class="status" id="status">Loading…</div>
+    <button type="button" id="refresh" class="button">Refresh</button>
+</header>
+
+<main>
+    <section class="summary" id="summary" aria-label="Summary"></section>
+
+    <section class="charts" aria-label="Charts">
+        <div class="chart-toolbar">
+            <label>Slices
+                <select id="slices">
+                    <option value="10">Top 10</option>
+                    <option value="15" selected>Top 15</option>
+                    <option value="20">Top 20</option>
+                    <option value="30">Top 30</option>
+                </select>
+            </label>
+            <span class="hint">Hover a slice for details, click it to find the stock in the list.</span>
+        </div>
+        <div class="chart-grid">
+            <article class="card">
+                <h2>Share of stock price</h2>
+                <p class="subtitle">Each stock's price as % of the sum of all S&amp;P 500 stock prices</p>
+                <div class="pie" id="price-pie"></div>
+            </article>
+            <article class="card">
+                <h2>Share of company value</h2>
+                <p class="subtitle">Each company's market cap as % of the total S&amp;P 500 market cap</p>
+                <div class="pie" id="cap-pie"></div>
+            </article>
+        </div>
+    </section>
+
+    <section class="card list" aria-label="S&amp;P 500 stocks">
+        <div class="list-toolbar">
+            <h2>S&amp;P 500 stocks <span class="count" id="count"></span></h2>
+            <input type="search" id="filter" placeholder="Filter by symbol, company or sector" autocomplete="off" spellcheck="false">
+            <select id="sector" aria-label="Sector">
+                <option value="">All sectors</option>
+            </select>
+        </div>
+        <div class="table-wrap">
+            <table id="stocks">
+                <thead>
+                <tr>
+                    <th data-key="rank" class="num">#</th>
+                    <th data-key="symbol">Symbol</th>
+                    <th data-key="name">Company</th>
+                    <th data-key="sector">Sector</th>
+                    <th data-key="price" class="num">Price</th>
+                    <th data-key="change" class="num">Change</th>
+                    <th data-key="change_percent" class="num">Change %</th>
+                    <th data-key="market_cap" class="num">Market cap</th>
+                    <th data-key="price_share" class="num">Price share</th>
+                    <th data-key="company_share" class="num">Company share</th>
+                </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </section>
+</main>
+<div class="tooltip" id="tooltip" hidden></div>
+</body>
+</html>

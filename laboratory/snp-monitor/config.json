@@ -1,0 +1,24 @@
+{
+    "server": {
+        "host": "127.0.0.1",
+        "port": 8720,
+        "open_browser": true
+    },
+    "browser": {
+        "chrome": "local",
+        "chrome_dir": "../../common/chrome",
+        "app_window": true,
+        "exit_on_close": true
+    },
+    "data": {
+        "constituent_sources": ["wikipedia", "github-datasets"],
+        "constituents_refresh_hours": 24,
+        "quote_refresh_seconds": 60,
+        "cache_dir": "data",
+        "request_timeout_seconds": 20
+    },
+    "logging": {
+        "level": "INFO",
+        "file": "logs/snp-monitor.log"
+    }
+}
