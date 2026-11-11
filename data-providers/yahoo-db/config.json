@@ -1,7 +1,7 @@
 {
     "version": "0.0.0.7",
     "database": {
-        "file_path": "../data/stocks.db"
+        "file_path": "../../../data/stocks.db"
     },
     "yahoo_finance": {
         "data_interval": "1d",
@@ -17,9 +17,9 @@
         "catch_up": true
     },
     "files": {
-        "nasdaq_tickers": "../data/nasdaq_tickers.json",
-        "nyse_tickers": "../data/nyse_tickers.json",
-        "nysearca_tickers": "../data/nysearca_tickers.json"
+        "nasdaq_tickers": "../../../data/nasdaq_tickers.json",
+        "nyse_tickers": "../../../data/nyse_tickers.json",
+        "nysearca_tickers": "../../../data/nysearca_tickers.json"
     },
     "web": {
         "host": "0.0.0.0",
