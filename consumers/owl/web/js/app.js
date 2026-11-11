@@ -2,7 +2,7 @@
 import { ApiClient, ApiError, loadConnection, saveConnection } from "./api.js";
 import { ChartView, DEFAULT_INDICATORS, INDICATOR_COLORS, indicatorKey, indicatorLabel } from "./chart.js";
 import { ConnectionMonitor, State } from "./connection.js";
-import { LineDrawings, MAX_LINES_PER_SYMBOL } from "./drawings.js";
+import { ChartDrawings, MAX_DRAWINGS_PER_SYMBOL, MAX_NOTE_LENGTH } from "./drawings.js";
 import { Explorer } from "./explorer.js";
 import { describeMarket } from "./market.js";
 import { SettingsPage, SettingsStore } from "./settings.js";
@@ -106,14 +106,14 @@ class OwlApp {
                 },
             },
             {
-                key: "chart.drawings", section: "Chart", title: "Trend Lines", type: "action",
-                description: "Lines drawn with the Line tool of the chart toolbar. Click a line to select it, drag it to move it, drag an end to stretch it, press Delete to remove it. They are saved per symbol on the server.",
+                key: "chart.drawings", section: "Chart", title: "Drawings", type: "action",
+                description: "Lines, arrows and comments drawn with the chart toolbar. Click one to select it, drag it to move it, drag an end (or a comment's tip) to stretch it, double-click a comment to edit it, press Delete to remove it. They are saved per symbol on the server.",
                 detail: () => {
                     const counts = Object.values(this.drawings).map((lines) => lines.length);
                     const total = counts.reduce((sum, n) => sum + n, 0);
-                    return `${total} line${total === 1 ? "" : "s"} on ${counts.length} symbol${counts.length === 1 ? "" : "s"}`;
+                    return `${total} drawing${total === 1 ? "" : "s"} on ${counts.length} symbol${counts.length === 1 ? "" : "s"}`;
                 },
-                button: "Delete all lines…",
+                button: "Delete all drawings…",
                 run: () => this.clearAllDrawings(),
             },
             {
@@ -200,7 +200,9 @@ class OwlApp {
             "zoom-out": () => this.chart?.zoom(1.4),
             "zoom-reset": () => this.chart?.resetZoom(),
             "reload-chart": () => this.loadChart(),
-            "draw-line": () => this.toggleLineDrawing(),
+            "draw-line": () => this.toggleDrawing("line"),
+            "draw-arrow": () => this.toggleDrawing("arrow"),
+            "draw-note": () => this.toggleDrawing("note"),
             "delete-line": () => this.lineTool?.deleteSelected(),
             "clear-lines": () => this.clearLines(),
         };
@@ -221,6 +223,9 @@ class OwlApp {
                 else if ((event.key === "Delete" || event.key === "Backspace") && this.lineTool.selected) {
                     event.preventDefault();
                     this.lineTool.deleteSelected();
+                } else if ((event.key === "Enter" || event.key === "F2") && this.lineTool.selected?.type === "note") {
+                    event.preventDefault();
+                    this.lineTool.editNote();
                 }
             }
         });
@@ -525,9 +530,16 @@ class OwlApp {
         if (!symbol) return;
         const requestId = ++this.chartRequest;
         this.chart ??= new ChartView($("chart-container"), $("legend"));
-        this.lineTool ??= new LineDrawings(this.chart, {
+        this.lineTool ??= new ChartDrawings(this.chart, {
             onChange: (lines) => this.saveDrawings(this.lineSymbol, lines),
             onState: () => this.renderLineTools(),
+            requestText: (value) => prompt({
+                title: value ? "Edit comment" : `Comment on ${this.lineSymbol}`,
+                placeholder: "Comment text",
+                hint: "Enter to save, Esc to cancel",
+                value,
+                validate: (text) => text.length > MAX_NOTE_LENGTH ? `At most ${MAX_NOTE_LENGTH} characters` : null,
+            }),
         });
         if (this.lineSymbol !== symbol) {
             this.lineSymbol = symbol;
@@ -614,7 +626,7 @@ class OwlApp {
         await this.loadDrawings();
     }
 
-    // ---- trend lines -------------------------------------------------------------------------
+    // ---- drawings (lines, arrows, comments) --------------------------------------------------
 
     async loadDrawings() {
         let saved;
@@ -639,38 +651,40 @@ class OwlApp {
         try {
             await this.api.putSetting("drawings", this.drawings);
         } catch (err) {
-            this.reportError("Saving lines failed", err);
+            this.reportError("Saving drawings failed", err);
         }
     }
 
-    toggleLineDrawing() {
-        if (!this.lineTool) return;
-        if (this.lineTool.drawing) this.lineTool.cancelDrawing();
-        else if (!this.lineTool.startDrawing()) notify(`At most ${MAX_LINES_PER_SYMBOL} lines per symbol`, "warning");
+    toggleDrawing(type) {
+        const tool = this.lineTool;
+        if (!tool) return;
+        const active = tool.mode === type;
+        tool.cancelDrawing();
+        if (!active && !tool.startDrawing(type)) notify(`At most ${MAX_DRAWINGS_PER_SYMBOL} drawings per symbol`, "warning");
     }
 
     async clearLines() {
         const count = this.lineTool?.lines.length ?? 0;
-        if (!count || !(await confirm(`Delete all ${count} line${count === 1 ? "" : "s"} of ${this.lineSymbol}?`, "Delete"))) return;
+        if (!count || !(await confirm(`Delete all ${count} drawing${count === 1 ? "" : "s"} of ${this.lineSymbol}?`, "Delete"))) return;
         this.lineTool.deleteAll();
     }
 
     async clearAllDrawings() {
-        if (!Object.keys(this.drawings).length || !(await confirm("Delete the lines of all symbols?", "Delete"))) return;
+        if (!Object.keys(this.drawings).length || !(await confirm("Delete the drawings of all symbols?", "Delete"))) return;
         this.drawings = {};
         this.lineTool?.setLines([]);
         localStorage.setItem("owl.drawings", "{}");
         try {
             await this.api.putSetting("drawings", {});
         } catch (err) {
-            this.reportError("Saving lines failed", err);
+            this.reportError("Saving drawings failed", err);
         }
         this.settingsPage.render();
     }
 
     renderLineTools() {
         const tool = this.lineTool;
-        $("draw-line-button").classList.toggle("active", Boolean(tool?.drawing));
+        for (const type of ["line", "arrow", "note"]) $(`draw-${type}-button`).classList.toggle("active", tool?.mode === type);
         $("delete-line-button").disabled = !tool?.selected;
         $("clear-lines-button").disabled = !tool?.lines.length;
     }

@@ -6,7 +6,7 @@ import pytest
 
 from finance_aggregator.core import InvalidRequestError
 from owl.errors import ConflictError, ResourceNotFoundError, ValidationError
-from owl.watchlist import DEFAULT_SYMBOLS, SqliteWatchlistRepository, WatchItem
+from owl.watchlist import DEFAULT_SYMBOLS, MAX_SETTING_BYTES, SqliteWatchlistRepository, WatchItem
 
 
 @pytest.fixture
@@ -114,7 +114,7 @@ def test_settings(repo: SqliteWatchlistRepository) -> None:
     repo.set_setting("chart", {"indicators": [{"type": "sma", "period": 20}]})
     assert repo.get_setting("chart")["indicators"][0]["period"] == 20
     with pytest.raises(ValidationError):
-        repo.set_setting("chart", {"blob": "x" * 70_000})
+        repo.set_setting("chart", {"blob": "x" * (MAX_SETTING_BYTES + 1)})
 
 
 def test_persistence(tmp_path: Path) -> None:

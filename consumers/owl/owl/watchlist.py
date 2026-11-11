@@ -16,7 +16,7 @@ from .errors import ConflictError, ResourceNotFoundError, ValidationError
 
 MAX_GROUP_NAME = 64
 MAX_SYMBOLS_PER_GROUP = 500
-MAX_SETTING_BYTES = 64 * 1024
+MAX_SETTING_BYTES = 256 * 1024  # drawings of all symbols, including comment texts
 DEFAULT_GROUP = "Watchlist"
 DEFAULT_SYMBOLS = ("SPY", "QQQ", "AAPL", "MSFT")
 

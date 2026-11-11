@@ -41,7 +41,7 @@ from .watchlist import WatchItem, WatchlistRepository
 
 logger = logging.getLogger(__name__)
 
-MAX_BODY_BYTES = 64 * 1024
+MAX_BODY_BYTES = 256 * 1024
 MAX_DRAIN_BYTES = 1024 * 1024
 SETTING_KEYS = frozenset({"chart", "ui", "drawings"})
 _WRITE_METHODS = frozenset({"POST", "PUT", "PATCH"})
