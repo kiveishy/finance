@@ -92,6 +92,11 @@ class TestApi:
         assert call(api, "PUT", "/api/settings/ui", value)[0] == 200
         assert call(api, "GET", "/api/settings/ui")[1]["data"] == value
 
+    def test_drawings_roundtrip(self, api: OwlApi) -> None:
+        value = {"AAPL": [{"id": "l1", "a": {"day": 20000, "price": 100.5}, "b": {"day": 20030.5, "price": 120}}]}
+        assert call(api, "PUT", "/api/settings/drawings", value)[0] == 200
+        assert call(api, "GET", "/api/settings/drawings")[1]["data"] == value
+
     def test_routing_errors(self, api: OwlApi) -> None:
         assert call(api, "GET", "/api/nope")[0] == 404
         assert call(api, "PUT", "/api/groups")[0] == 405

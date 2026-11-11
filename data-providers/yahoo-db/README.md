@@ -24,10 +24,33 @@ This service provides:
 ## Features
 
 ### Web Interface
-- 📊 **Dashboard** - View current status, ticker count, and last sync time
-- 🔄 **Sync Controls** - Start and stop synchronization with one click
-- ➕ **Add Tickers** - Add new stock symbols to track
-- 📈 **Progress Tracking** - Real-time progress during synchronization
+
+The dashboard has the same dark VS Code look as Owl: an activity bar on the left, a title bar showing whether
+the US market is open, notifications at the bottom right, and a status bar (update status, ticker count,
+daily schedule, version). It is plain HTML/CSS/JS under `static/` (codicons included), so it needs no CDN.
+
+| View | What you get |
+|------|--------------|
+| **Dashboard** | Update status, tickers in the database, last full update, next scheduled update, a live progress bar, and **Start update** / **Stop** buttons |
+| **Tickers** | Find a ticker in the database or add one from Yahoo Finance (both suggest matches as you type). The ticker page has **Info**, **Price history**, **Updates** (summary and log) and **Splits** (with **Check now**) tabs. The URL `#tickers/AAPL` opens a ticker directly |
+| **Schedule** | The daily update: on/off, time, time zone, and whether a missed update runs after a restart. It shows the next run (in that time zone and in your own), the last scheduled run and its result, and the server time |
+| **API** | The REST endpoints, with links to the GET ones |
+
+### Daily update
+
+The service runs the full update (ticker lists, new tickers, latest prices, split checks) **every day at
+23:30 Israel time** by default, shortly after the US market closes. Change it in the **Schedule** view.
+Changes apply at once and are saved in `config.json` (`scheduling`):
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `true` | Run the daily update |
+| `run_time` | `"23:30"` | Start time, `HH:MM` (24-hour clock) |
+| `timezone` | `"Asia/Jerusalem"` | Any IANA time zone (`America/New_York`, `UTC`, ...) or `"local"` for the server's clock. Daylight saving time is handled |
+| `catch_up` | `true` | If the service was down at the scheduled time, run the missed update one minute after it starts again (only within 24 hours) |
+
+The outcome of the last scheduled run is kept in `schedule_state.json` next to the database. A scheduled
+run is skipped (and logged) when an update is already running.
 
 ### REST API
 - Get list of all tickers in database
@@ -173,7 +196,7 @@ Edit `config.json` to customize behavior:
 | `database.file_path` | Path to SQLite database file |
 | `yahoo_finance.data_interval` | Data granularity (1d = daily) |
 | `yahoo_finance.history_period` | Historical data period (10y = 10 years) |
-| `scheduling.run_time` | Daily sync time (if scheduled) |
+| `scheduling.*` | Daily update time, see [Daily update](#daily-update) |
 | `files.nasdaq_tickers` | Path to cached NASDAQ ticker list |
 | `files.nyse_tickers` | Path to cached NYSE ticker list |
 | `files.nysearca_tickers` | Path to cached NYSE Arca ticker list |
@@ -265,6 +288,7 @@ curl -X POST http://localhost:5000/api/sync/start
 ├── database.py          # SQLite database operations
 ├── yahoo_finance.py     # Yahoo Finance API client (NASDAQ, NYSE & NYSE Arca support)
 ├── split_check.py       # Stock split detection and history re-download
+├── scheduler.py         # Daily update scheduler (time + time zone from config.json / the Schedule view)
 ├── tests/               # pytest tests (python -m pytest tests -q)
 ├── sync_nyse.py         # NYSE and NYSE Arca ticker synchronization script
 ├── config.json          # Application configuration
@@ -277,7 +301,8 @@ curl -X POST http://localhost:5000/api/sync/start
 ├── README.md            # This file
 ├── API.md               # API documentation
 ├── templates/
-│   └── index.html       # Web dashboard template
+│   └── index.html       # Web dashboard page
+├── static/              # Dashboard CSS/JS, icons and the vendored codicons font
 └── data/
     ├── stocks.db        # SQLite database (created on first run)
     ├── nasdaq_tickers.json  # Cached NASDAQ ticker list

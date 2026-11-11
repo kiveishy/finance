@@ -65,6 +65,12 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--focus); out
 }
 .titlebar-logo { width: 16px; height: 16px; position: absolute; left: 10px; }
 #toggle-sidebar { position: absolute; left: 4px; }
+.market-status { position: absolute; right: 10px; display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: default; }
+.market-status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--fg-muted); }
+.market-status.open::before { background: var(--up); box-shadow: 0 0 4px var(--up); }
+.market-status.pre::before, .market-status.post::before { background: var(--warning); }
+.market-status.closed::before { background: var(--down); }
+body.hide-market-status .market-status { display: none; }
 
 /* ---- workbench ---------------------------------------------------------------------------- */
 #workbench { flex: 1; display: flex; min-height: 0; position: relative; }
@@ -273,6 +279,9 @@ body.hide-group-change .tree-row .group-change { display: none; }
 .segmented button.active { color: #ffffff; background: rgba(0, 122, 204, 0.35); }
 .toolbar-button { display: inline-flex; align-items: center; gap: 4px; }
 .toolbar-separator { width: 1px; height: 18px; background: #3c3c3c; flex: none; }
+.toolbar-button.active { color: #ffffff; background: rgba(0, 122, 204, 0.35); }
+.icon-button:disabled { opacity: 0.4; cursor: default; background: none; }
+#chart-container.drawing { cursor: crosshair; }
 .toolbar-spacer { flex: 1; }
 
 .dropdown { position: relative; }
@@ -436,6 +445,9 @@ body.hide-group-change .tree-row .group-change { display: none; }
     body.explorer-right #sidebar { left: auto; right: 0; transform: translateX(105%); }
     body.explorer-right.sidebar-open #sidebar { transform: none; }
     body.explorer-right #toggle-sidebar { left: auto; right: 4px; }
+    body.explorer-right .market-status { right: auto; left: 10px; }
+    .market-status { font-size: 11px; }
+    body:not(.hide-market-status) .titlebar-title { display: none; }
     .settings-toc { display: none; }
     .settings-header, .settings-list { padding-left: 16px; padding-right: 16px; }
     .tree-row { height: 34px; }

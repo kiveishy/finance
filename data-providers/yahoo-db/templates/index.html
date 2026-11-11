@@ -1,1041 +1,194 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stock Data Service - Dashboard</title>
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background-color: #f5f7fa;
-            color: #333;
-            line-height: 1.6;
-        }
-
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-
-        header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px 20px;
-            text-align: center;
-            margin-bottom: 30px;
-            border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-
-        header h1 {
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-        }
-
-        header p {
-            opacity: 0.9;
-            font-size: 1.1rem;
-        }
-
-        .dashboard {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-
-        .card {
-            background: white;
-            border-radius: 10px;
-            padding: 25px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
-        }
-
-        .card h2 {
-            color: #667eea;
-            margin-bottom: 20px;
-            font-size: 1.3rem;
-            border-bottom: 2px solid #f0f0f0;
-            padding-bottom: 10px;
-        }
-
-        .status-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-        }
-
-        .status-item {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-        }
-
-        .status-item label {
-            display: block;
-            font-size: 0.85rem;
-            color: #666;
-            margin-bottom: 5px;
-        }
-
-        .status-item .value {
-            font-size: 1.2rem;
-            font-weight: 600;
-            color: #333;
-        }
-
-        .status-running {
-            color: #28a745 !important;
-        }
-
-        .status-idle {
-            color: #6c757d !important;
-        }
-
-        .status-error {
-            color: #dc3545 !important;
-        }
-
-        .btn {
-            display: inline-block;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 1rem;
-            font-weight: 500;
-            transition: all 0.3s ease;
-            margin-right: 10px;
-            margin-bottom: 10px;
-        }
-
-        .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-        }
-
-        .btn-danger {
-            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
-            color: white;
-        }
-
-        .btn-danger:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
-        }
-
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 500;
-            color: #555;
-        }
-
-        .form-group input {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 6px;
-            font-size: 1rem;
-            transition: border-color 0.3s ease;
-        }
-
-        .form-group input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-
-        .progress-bar {
-            height: 10px;
-            background: #e0e0e0;
-            border-radius: 5px;
-            overflow: hidden;
-            margin-top: 15px;
-        }
-
-        .progress-bar-fill {
-            height: 100%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 5px;
-            transition: width 0.3s ease;
-        }
-
-        .progress-text {
-            margin-top: 10px;
-            font-size: 0.9rem;
-            color: #666;
-        }
-
-        .alert {
-            padding: 15px 20px;
-            border-radius: 6px;
-            margin-bottom: 20px;
-            display: none;
-        }
-
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-
-        .alert-error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-
-        .ticker-list {
-            max-height: 300px;
-            overflow-y: auto;
-            margin-top: 15px;
-        }
-
-        .ticker-item {
-            display: flex;
-            justify-content: space-between;
-            padding: 10px 15px;
-            background: #f8f9fa;
-            margin-bottom: 8px;
-            border-radius: 6px;
-            transition: background 0.3s ease;
-        }
-
-        .ticker-item:hover {
-            background: #e9ecef;
-        }
-
-        .ticker-symbol {
-            font-weight: 600;
-            color: #667eea;
-        }
-
-        .api-info {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 6px;
-            margin-top: 15px;
-        }
-
-        .api-endpoint {
-            font-family: monospace;
-            background: #333;
-            color: #0f0;
-            padding: 8px 12px;
-            border-radius: 4px;
-            margin: 8px 0;
-            display: block;
-            overflow-x: auto;
-        }
-
-        /* Stock Detail Section */
-        .stock-detail-section {
-            margin-bottom: 30px;
-        }
-
-        .stock-search {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-
-        .stock-search input {
-            flex: 1;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 6px;
-            font-size: 1rem;
-        }
-
-        .stock-search input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-
-        .suggest-wrap {
-            position: relative;
-        }
-
-        .stock-search .suggest-wrap {
-            flex: 1;
-            display: flex;
-        }
-
-        .suggest-list {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            right: 0;
-            z-index: 20;
-            margin-top: 4px;
-            max-height: 320px;
-            overflow-y: auto;
-            background: white;
-            border: 1px solid #e0e0e0;
-            border-radius: 6px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-        }
-
-        .suggest-item {
-            display: flex;
-            align-items: baseline;
-            gap: 10px;
-            padding: 8px 12px;
-            cursor: pointer;
-        }
-
-        .suggest-item.active,
-        .suggest-item:hover {
-            background: #f0f4ff;
-        }
-
-        .suggest-symbol {
-            min-width: 70px;
-            font-weight: 600;
-            color: #667eea;
-        }
-
-        .suggest-name {
-            flex: 1;
-            min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .suggest-meta,
-        .suggest-msg {
-            font-size: 0.8rem;
-            color: #888;
-            white-space: nowrap;
-        }
-
-        .suggest-msg {
-            padding: 8px 12px;
-        }
-
-        .tabs {
-            display: flex;
-            border-bottom: 2px solid #e0e0e0;
-            margin-bottom: 20px;
-        }
-
-        .tab-btn {
-            padding: 12px 24px;
-            border: none;
-            background: none;
-            cursor: pointer;
-            font-size: 1rem;
-            font-weight: 500;
-            color: #666;
-            border-bottom: 3px solid transparent;
-            margin-bottom: -2px;
-            transition: all 0.3s ease;
-        }
-
-        .tab-btn:hover {
-            color: #667eea;
-        }
-
-        .tab-btn.active {
-            color: #667eea;
-            border-bottom-color: #667eea;
-        }
-
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
-        .info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 15px;
-        }
-
-        .info-item {
-            background: #f8f9fa;
-            padding: 12px 15px;
-            border-radius: 6px;
-        }
-
-        .info-item label {
-            display: block;
-            font-size: 0.8rem;
-            color: #888;
-            margin-bottom: 4px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .info-item .info-value {
-            font-size: 1rem;
-            font-weight: 500;
-            color: #333;
-        }
-
-        .data-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9rem;
-        }
-
-        .data-table th {
-            background: #667eea;
-            color: white;
-            padding: 10px 12px;
-            text-align: left;
-            position: sticky;
-            top: 0;
-        }
-
-        .data-table td {
-            padding: 8px 12px;
-            border-bottom: 1px solid #eee;
-        }
-
-        .data-table tr:hover {
-            background: #f0f4ff;
-        }
-
-        .table-container {
-            max-height: 400px;
-            overflow-y: auto;
-            border-radius: 6px;
-            border: 1px solid #e0e0e0;
-        }
-
-        .summary-cards {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-
-        .summary-card {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-        }
-
-        .summary-card .summary-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #667eea;
-        }
-
-        .summary-card .summary-label {
-            font-size: 0.8rem;
-            color: #888;
-            margin-top: 4px;
-        }
-
-        .status-badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            font-weight: 500;
-        }
-
-        .status-badge.success {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .status-badge.error {
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 40px;
-            color: #999;
-        }
-
-        footer {
-            text-align: center;
-            padding: 20px;
-            color: #666;
-            font-size: 0.9rem;
-        }
-    </style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#3c3c3c">
+    <title>Yahoo DB</title>
+    <link rel="icon" href="/static/icons/yahoo-db.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/vendor/codicons/codicon.css">
+    <link rel="stylesheet" href="/static/css/app.css">
+    <script type="module" src="/static/js/app.js"></script>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>📈 Stock Data Service</h1>
-            <p>Yahoo Finance Database Synchronization Dashboard v0.0.0.7</p>
-        </header>
+<div id="titlebar">
+    <img src="/static/icons/yahoo-db.svg" alt="" class="titlebar-logo">
+    <span class="titlebar-title" id="window-title">Yahoo DB — Stock Data Service</span>
+    <span class="market-status" id="market-status"></span>
+</div>
 
-        <div id="alert" class="alert"></div>
+<div id="workbench">
+    <nav id="activitybar">
+        <button class="activity" data-view="dashboard" title="Dashboard"><i class="codicon codicon-dashboard"></i></button>
+        <button class="activity" data-view="tickers" title="Tickers"><i class="codicon codicon-search"></i></button>
+        <button class="activity" data-view="schedule" title="Daily update schedule"><i class="codicon codicon-watch"></i></button>
+        <button class="activity" data-view="api" title="REST API"><i class="codicon codicon-plug"></i></button>
+    </nav>
 
-        <div class="dashboard">
-            <!-- Status Card -->
-            <div class="card">
-                <h2>📊 Current Status</h2>
-                <div class="status-grid">
-                    <div class="status-item">
-                        <label>Sync Status</label>
-                        <div class="value" id="sync-status">Loading...</div>
-                    </div>
-                    <div class="status-item">
-                        <label>Total Tickers</label>
-                        <div class="value" id="ticker-count">-</div>
-                    </div>
-                    <div class="status-item" style="grid-column: span 2;">
-                        <label>Last Synchronization</label>
-                        <div class="value" id="last-sync">Never</div>
-                    </div>
+    <main id="editor">
+        <!-- Dashboard -->
+        <section class="view" id="view-dashboard" hidden>
+            <header class="view-header">
+                <h1><i class="codicon codicon-dashboard"></i> Dashboard</h1>
+                <div class="view-actions">
+                    <button class="button" id="btn-start-sync"><i class="codicon codicon-play"></i> Start update</button>
+                    <button class="button secondary" id="btn-stop-sync" disabled><i class="codicon codicon-debug-stop"></i> Stop</button>
                 </div>
-                
-                <div id="progress-container" style="display: none;">
-                    <div class="progress-bar">
-                        <div class="progress-bar-fill" id="progress-fill" style="width: 0%"></div>
-                    </div>
-                    <div class="progress-text" id="progress-text">Processing...</div>
-                </div>
-            </div>
-
-            <!-- Sync Controls Card -->
-            <div class="card">
-                <h2>🔄 Synchronization Control</h2>
-                <p style="margin-bottom: 20px; color: #666;">
-                    Start or stop the database synchronization with Yahoo Finance.
-                    This will fetch NASDAQ tickers and their historical data.
-                </p>
-                <button class="btn btn-primary" id="btn-start-sync" onclick="startSync()">
-                    ▶️ Start Sync
-                </button>
-                <button class="btn btn-danger" id="btn-stop-sync" onclick="stopSync()" disabled>
-                    ⏹️ Stop Sync
-                </button>
-            </div>
-
-            <!-- Add Ticker Card -->
-            <div class="card">
-                <h2>➕ Add New Ticker</h2>
-                <p style="margin-bottom: 20px; color: #666;">
-                    Add a new stock ticker to the database. Historical data will be
-                    automatically downloaded.
-                </p>
-                <div class="form-group">
-                    <label for="ticker-input">Ticker Symbol</label>
-                    <div class="suggest-wrap">
-                        <input type="text" id="ticker-input" autocomplete="off" spellcheck="false"
-                               placeholder="Ticker or company name, e.g. AAPL, apple">
+            </header>
+            <div class="view-body">
+                <div class="cards">
+                    <div class="card stat"><div class="stat-label">Update status</div><div class="stat-value" id="stat-status">—</div></div>
+                    <div class="card stat"><div class="stat-label">Tickers in database</div><div class="stat-value" id="stat-tickers">—</div></div>
+                    <div class="card stat"><div class="stat-label">Last full update</div><div class="stat-value small" id="stat-last-sync">—</div></div>
+                    <div class="card stat link" data-goto="schedule" title="Change the daily update time">
+                        <div class="stat-label">Next scheduled update</div><div class="stat-value small" id="stat-next-run">—</div>
                     </div>
                 </div>
-                <button class="btn btn-primary" onclick="addTicker()">
-                    ➕ Add Ticker
-                </button>
-            </div>
-
-            <!-- API Info Card -->
-            <div class="card">
-                <h2>🔌 REST API</h2>
-                <p style="color: #666;">Available API endpoints for external applications:</p>
-                <div class="api-info">
-                    <strong>Get All Tickers:</strong>
-                    <code class="api-endpoint">GET /api/tickers</code>
-                    
-                    <strong>Get Ticker Info:</strong>
-                    <code class="api-endpoint">GET /api/ticker/{symbol}</code>
-                    
-                    <strong>Get Historical Data:</strong>
-                    <code class="api-endpoint">GET /api/ticker/{symbol}/history?days=30</code>
-                    
-                    <strong>Add Ticker:</strong>
-                    <code class="api-endpoint">POST /api/ticker {"symbol": "AAPL"}</code>
-                </div>
-                <p style="margin-top: 15px;">
-                    <a href="/api/tickers" target="_blank" style="color: #667eea;">
-                        View all tickers (JSON) →
-                    </a>
-                </p>
-            </div>
-        </div>
-
-        <!-- Stock Detail Section -->
-        <div class="card stock-detail-section">
-            <h2>🔍 Stock Detail Viewer</h2>
-            <div class="stock-search">
-                <div class="suggest-wrap">
-                    <input type="text" id="detail-ticker-input" autocomplete="off" spellcheck="false"
-                           placeholder="Ticker or company name (e.g., AAPL, apple, SPY)">
-                </div>
-                <button class="btn btn-primary" onclick="loadStockDetail()">View Details</button>
-            </div>
-
-            <div id="stock-detail-container" style="display: none;">
-                <h3 id="stock-detail-title" style="margin-bottom: 15px; color: #333;"></h3>
-
-                <div class="tabs">
-                    <button class="tab-btn active" onclick="switchTab('info')">📋 Info</button>
-                    <button class="tab-btn" onclick="switchTab('history')">📈 Price History</button>
-                    <button class="tab-btn" onclick="switchTab('updates')">🔄 Update History</button>
-                </div>
-
-                <!-- Info Tab -->
-                <div id="tab-info" class="tab-content active">
-                    <div id="stock-info-grid" class="info-grid"></div>
-                </div>
-
-                <!-- Price History Tab -->
-                <div id="tab-history" class="tab-content">
-                    <div style="margin-bottom: 15px;">
-                        <label style="margin-right: 10px; font-weight: 500;">Period:</label>
-                        <select id="history-period" onchange="loadPriceHistory()" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd;">
-                            <option value="30">Last 30 days</option>
-                            <option value="90">Last 90 days</option>
-                            <option value="180">Last 6 months</option>
-                            <option value="365" selected>Last 1 year</option>
-                            <option value="1825">Last 5 years</option>
-                        </select>
+                <div class="card" id="progress-card" hidden>
+                    <div class="progress-head">
+                        <span id="progress-text">Updating…</span>
+                        <span id="progress-percent"></span>
                     </div>
-                    <div id="price-history-table" class="table-container"></div>
+                    <div class="progress"><div class="progress-fill" id="progress-fill"></div></div>
                 </div>
-
-                <!-- Update History Tab -->
-                <div id="tab-updates" class="tab-content">
-                    <div id="update-summary"></div>
-                    <div id="update-history-table" class="table-container"></div>
+                <div class="card">
+                    <h2>About the update</h2>
+                    <p class="muted">An update fetches the current NASDAQ, NYSE and NYSE Arca ticker lists, downloads the full
+                        history of new tickers, adds the latest days to existing ones, and checks every ticker's history for
+                        stock splits. It runs automatically every day at the time set under
+                        <a href="#schedule">Schedule</a>, and can be started here at any time.</p>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <footer>
-            <p>Stock Data Service v0.0.0.7 | Powered by Yahoo Finance API</p>
-        </footer>
+        <!-- Tickers -->
+        <section class="view" id="view-tickers" hidden>
+            <header class="view-header">
+                <h1><i class="codicon codicon-search"></i> Tickers</h1>
+            </header>
+            <div class="view-body">
+                <div class="toolbar-row">
+                    <div class="field grow">
+                        <label for="detail-ticker-input">Find a ticker in the database</label>
+                        <div class="suggest-wrap">
+                            <input type="text" id="detail-ticker-input" class="input" autocomplete="off" spellcheck="false"
+                                   placeholder="Ticker or company name, e.g. AAPL, apple, SPY">
+                        </div>
+                    </div>
+                    <div class="field grow">
+                        <label for="ticker-input">Add a ticker from Yahoo Finance</label>
+                        <div class="input-row">
+                            <div class="suggest-wrap grow">
+                                <input type="text" id="ticker-input" class="input" autocomplete="off" spellcheck="false"
+                                       placeholder="Ticker or company name, e.g. NVDA, nvidia">
+                            </div>
+                            <button class="button" id="btn-add-ticker"><i class="codicon codicon-add"></i> Add</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="detail" hidden>
+                    <div class="detail-title">
+                        <h2 id="detail-title"></h2>
+                        <span class="muted" id="detail-subtitle"></span>
+                    </div>
+                    <div class="tabs" role="tablist">
+                        <button class="tab active" data-tab="info"><i class="codicon codicon-info"></i> Info</button>
+                        <button class="tab" data-tab="history"><i class="codicon codicon-graph-line"></i> Price history</button>
+                        <button class="tab" data-tab="updates"><i class="codicon codicon-history"></i> Updates</button>
+                        <button class="tab" data-tab="splits"><i class="codicon codicon-split-horizontal"></i> Splits</button>
+                    </div>
+                    <div class="tab-panel" id="tab-info"></div>
+                    <div class="tab-panel" id="tab-history" hidden>
+                        <div class="panel-toolbar">
+                            <label for="history-period">Period</label>
+                            <select id="history-period" class="input">
+                                <option value="30">Last 30 days</option>
+                                <option value="90">Last 90 days</option>
+                                <option value="180">Last 6 months</option>
+                                <option value="365" selected>Last year</option>
+                                <option value="1825">Last 5 years</option>
+                            </select>
+                        </div>
+                        <div class="table-wrap" id="history-table"></div>
+                    </div>
+                    <div class="tab-panel" id="tab-updates" hidden></div>
+                    <div class="tab-panel" id="tab-splits" hidden></div>
+                </div>
+                <div class="empty" id="detail-empty">
+                    <i class="codicon codicon-database"></i>
+                    <p>Search for a ticker to see its information, price history, updates and splits.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Schedule -->
+        <section class="view" id="view-schedule" hidden>
+            <header class="view-header">
+                <h1><i class="codicon codicon-watch"></i> Daily update schedule</h1>
+            </header>
+            <div class="view-body">
+                <form class="card form" id="schedule-form" autocomplete="off">
+                    <div class="setting">
+                        <label class="checkbox"><input type="checkbox" id="schedule-enabled"> Run the update automatically every day</label>
+                    </div>
+                    <div class="setting">
+                        <label for="schedule-time">Time</label>
+                        <div class="setting-description">When the daily update starts (24-hour clock).</div>
+                        <input type="time" id="schedule-time" class="input" required>
+                    </div>
+                    <div class="setting">
+                        <label for="schedule-timezone">Time zone</label>
+                        <div class="setting-description">The time above is in this time zone. New York time follows the US market, including daylight saving time.</div>
+                        <select id="schedule-timezone" class="input"></select>
+                    </div>
+                    <div class="setting">
+                        <label class="checkbox"><input type="checkbox" id="schedule-catch-up"> Run a missed update after a restart</label>
+                        <div class="setting-description">If the service was not running at the scheduled time, start the update one minute after it starts again (only for the last 24 hours).</div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="button" id="btn-save-schedule"><i class="codicon codicon-save"></i> Save</button>
+                        <button type="button" class="button secondary" id="btn-reset-schedule">Discard changes</button>
+                        <span class="muted" id="schedule-dirty"></span>
+                    </div>
+                </form>
+                <div class="cards">
+                    <div class="card stat"><div class="stat-label">Next run</div><div class="stat-value small" id="schedule-next">—</div><div class="stat-note" id="schedule-next-local"></div></div>
+                    <div class="card stat"><div class="stat-label">Last scheduled run</div><div class="stat-value small" id="schedule-last">—</div><div class="stat-note" id="schedule-last-result"></div></div>
+                    <div class="card stat"><div class="stat-label">Server time</div><div class="stat-value small" id="schedule-server-time">—</div><div class="stat-note">The schedule runs on the server's clock.</div></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- API -->
+        <section class="view" id="view-api" hidden>
+            <header class="view-header">
+                <h1><i class="codicon codicon-plug"></i> REST API</h1>
+            </header>
+            <div class="view-body">
+                <div class="card">
+                    <p class="muted">Endpoints for other applications (the finance aggregator, Owl, scripts). Full documentation: <code>API.md</code>.</p>
+                    <table class="table" id="api-table">
+                        <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
+</div>
+
+<footer id="statusbar">
+    <div class="status-left">
+        <span class="status-item" id="status-sync"><i class="codicon codicon-sync"></i> connecting…</span>
+        <span class="status-item" id="status-tickers"></span>
     </div>
+    <div class="status-right">
+        <span class="status-item clickable" id="status-schedule" data-goto="schedule" title="Daily update schedule"></span>
+        <span class="status-item" id="status-version">Yahoo DB</span>
+    </div>
+</footer>
 
-    <script>
-        // Update status every 5 seconds (idle) or 2 seconds (sync running)
-        let statusInterval;
-        let statusPending = false;
-
-        function updateStatus() {
-            // Prevent overlapping requests
-            if (statusPending) return;
-            statusPending = true;
-
-            fetch('/status')
-                .then(response => response.json())
-                .then(data => {
-                    // Update sync status
-                    const statusEl = document.getElementById('sync-status');
-                    statusEl.textContent = data.sync_status.charAt(0).toUpperCase() + data.sync_status.slice(1);
-                    statusEl.className = 'value';
-                    if (data.sync_running) {
-                        statusEl.classList.add('status-running');
-                    } else if (data.sync_status === 'error' || data.sync_status.startsWith('error')) {
-                        statusEl.classList.add('status-error');
-                    } else {
-                        statusEl.classList.add('status-idle');
-                    }
-
-                    // Update ticker count
-                    document.getElementById('ticker-count').textContent = data.ticker_count;
-
-                    // Update last sync time
-                    if (data.last_sync_time) {
-                        const date = new Date(data.last_sync_time);
-                        document.getElementById('last-sync').textContent = date.toLocaleString();
-                    }
-
-                    // Update buttons
-                    document.getElementById('btn-start-sync').disabled = data.sync_running;
-                    document.getElementById('btn-stop-sync').disabled = !data.sync_running;
-
-                    // Update progress
-                    const progressContainer = document.getElementById('progress-container');
-                    if (data.sync_running && data.progress.total > 0) {
-                        progressContainer.style.display = 'block';
-                        const percent = (data.progress.current / data.progress.total) * 100;
-                        document.getElementById('progress-fill').style.width = percent + '%';
-                        document.getElementById('progress-text').textContent = 
-                            `Processing ${data.progress.current}/${data.progress.total}: ${data.progress.current_ticker}`;
-                    } else {
-                        progressContainer.style.display = 'none';
-                    }
-
-                    // Adapt polling interval: faster when sync is running
-                    adjustPollingInterval(data.sync_running);
-                })
-                .catch(error => {
-                    console.error('Error fetching status:', error);
-                })
-                .finally(() => {
-                    statusPending = false;
-                });
-        }
-
-        function showAlert(message, type) {
-            const alertEl = document.getElementById('alert');
-            alertEl.textContent = message;
-            alertEl.className = 'alert alert-' + type;
-            alertEl.style.display = 'block';
-            
-            setTimeout(() => {
-                alertEl.style.display = 'none';
-            }, 5000);
-        }
-
-        function startSync() {
-            fetch('/api/sync/start', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        showAlert('Synchronization started!', 'success');
-                    } else {
-                        showAlert(data.error || 'Failed to start sync', 'error');
-                    }
-                    updateStatus();
-                })
-                .catch(error => {
-                    showAlert('Error: ' + error, 'error');
-                });
-        }
-
-        function stopSync() {
-            fetch('/api/sync/stop', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        showAlert('Stop request sent. Sync will stop after current ticker.', 'success');
-                    } else {
-                        showAlert(data.error || 'Failed to stop sync', 'error');
-                    }
-                    updateStatus();
-                })
-                .catch(error => {
-                    showAlert('Error: ' + error, 'error');
-                });
-        }
-
-        function addTicker() {
-            const input = document.getElementById('ticker-input');
-            const symbol = input.value.trim().toUpperCase();
-            
-            if (!symbol) {
-                showAlert('Please enter a ticker symbol', 'error');
-                return;
-            }
-
-            fetch('/api/ticker', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ symbol: symbol })
-            })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        showAlert(`Ticker ${symbol} added successfully! (${data.records_added} records)`, 'success');
-                        input.value = '';
-                        updateStatus();
-                    } else {
-                        showAlert(data.error || 'Failed to add ticker', 'error');
-                    }
-                })
-                .catch(error => {
-                    showAlert('Error: ' + error, 'error');
-                });
-        }
-
-        // Adjust polling rate: 2s while syncing, 5s when idle
-        let currentInterval = 5000;
-        function adjustPollingInterval(syncRunning) {
-            const desired = syncRunning ? 2000 : 5000;
-            if (desired !== currentInterval) {
-                currentInterval = desired;
-                clearInterval(statusInterval);
-                statusInterval = setInterval(updateStatus, currentInterval);
-            }
-        }
-
-        // Initial load and start polling
-        updateStatus();
-        statusInterval = setInterval(updateStatus, 5000);
-
-        // ============== Ticker suggestions (type-ahead) ==============
-
-        /**
-         * Shows matching tickers under `input` while typing (via /api/search).
-         * Arrow keys move, Enter/click picks the highlighted match, Escape closes the list.
-         * onSubmit runs on Enter when no list is open; picking only runs it when submitOnPick is true.
-         */
-        function attachSuggest(input, { source, onSubmit, submitOnPick }) {
-            const list = document.createElement('div');
-            list.className = 'suggest-list';
-            list.hidden = true;
-            input.parentElement.appendChild(list);
-            let items = [];
-            let active = -1;
-            let timer = null;
-            let seq = 0;
-
-            function span(cls, text) {
-                const el = document.createElement('span');
-                el.className = cls;
-                el.textContent = text;
-                return el;
-            }
-
-            function close() {
-                clearTimeout(timer);
-                seq++;
-                items = [];
-                active = -1;
-                list.hidden = true;
-            }
-
-            function render(message) {
-                list.replaceChildren();
-                if (message) {
-                    const msg = document.createElement('div');
-                    msg.className = 'suggest-msg';
-                    msg.textContent = message;
-                    list.appendChild(msg);
-                }
-                items.forEach((item, index) => {
-                    const row = document.createElement('div');
-                    row.className = 'suggest-item' + (index === active ? ' active' : '');
-                    const meta = [item.exchange, item.quote_type, item.in_database ? 'in database' : '']
-                        .filter(Boolean).join(' · ');
-                    row.append(span('suggest-symbol', item.symbol),
-                               span('suggest-name', item.long_name || item.short_name || ''),
-                               span('suggest-meta', meta));
-                    row.addEventListener('mousedown', (e) => { e.preventDefault(); pick(index); });
-                    list.appendChild(row);
-                });
-                list.hidden = !message && !items.length;
-                list.children[active + (message ? 1 : 0)]?.scrollIntoView({ block: 'nearest' });
-            }
-
-            function pick(index) {
-                input.value = items[index].symbol;
-                close();
-                if (submitOnPick) onSubmit();
-            }
-
-            input.addEventListener('input', () => {
-                clearTimeout(timer);
-                const query = input.value.trim();
-                const mySeq = ++seq;
-                if (!query) {
-                    close();
-                    return;
-                }
-                timer = setTimeout(() => {
-                    fetch('/api/search?' + new URLSearchParams({ q: query, limit: '10', source }))
-                        .then(r => r.json().then(data => ({ ok: r.ok, data })))
-                        .then(({ ok, data }) => {
-                            if (mySeq !== seq) return;  // superseded by a newer keystroke
-                            items = ok ? data.data : [];
-                            const exact = items.findIndex(i => i.symbol.toUpperCase() === query.toUpperCase());
-                            active = items.length ? Math.max(exact, 0) : -1;
-                            render(ok ? (items.length ? '' : 'No matches') : (data.error || 'Search failed'));
-                        })
-                        .catch(() => {
-                            if (mySeq === seq) render('Search unavailable');
-                        });
-                }, 200);
-            });
-
-            input.addEventListener('keydown', (e) => {
-                const open = !list.hidden && items.length > 0;
-                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-                    if (!open) return;
-                    e.preventDefault();
-                    active = (active + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
-                    render('');
-                } else if (e.key === 'Enter') {
-                    e.preventDefault();
-                    if (open && active >= 0) {
-                        pick(active);
-                    } else {
-                        close();
-                        onSubmit();
-                    }
-                } else if (e.key === 'Escape') {
-                    close();
-                }
-            });
-
-            input.addEventListener('blur', close);
-        }
-
-        attachSuggest(document.getElementById('ticker-input'), {
-            source: 'yahoo', onSubmit: addTicker, submitOnPick: false
-        });
-        attachSuggest(document.getElementById('detail-ticker-input'), {
-            source: 'db', onSubmit: loadStockDetail, submitOnPick: true
-        });
-
-        // ============== Stock Detail Viewer ==============
-
-        let currentDetailSymbol = '';
-
-        function switchTab(tabName) {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            document.getElementById('tab-' + tabName).classList.add('active');
-            event.target.classList.add('active');
-        }
-
-        function loadStockDetail() {
-            const input = document.getElementById('detail-ticker-input');
-            const symbol = input.value.trim().toUpperCase();
-            if (!symbol) {
-                showAlert('Please enter a ticker symbol', 'error');
-                return;
-            }
-            currentDetailSymbol = symbol;
-            document.getElementById('stock-detail-container').style.display = 'block';
-            document.getElementById('stock-detail-title').textContent = 'Loading ' + symbol + '...';
-
-            // Load all tabs
-            loadTickerInfo(symbol);
-            loadPriceHistory();
-            loadUpdateHistory(symbol);
-        }
-
-        function loadTickerInfo(symbol) {
-            fetch('/api/ticker/' + encodeURIComponent(symbol))
-                .then(r => r.json())
-                .then(data => {
-                    if (data.status === 'success' && data.data) {
-                        const d = data.data;
-                        document.getElementById('stock-detail-title').textContent =
-                            (d.long_name || d.short_name || symbol) + ' (' + symbol + ')';
-                        const fields = [
-                            {label: 'Symbol', value: d.symbol},
-                            {label: 'Short Name', value: d.short_name},
-                            {label: 'Sector', value: d.sector},
-                            {label: 'Industry', value: d.industry},
-                            {label: 'Exchange', value: d.exchange},
-                            {label: 'Market Cap', value: d.market_cap ? '$' + Number(d.market_cap).toLocaleString() : 'N/A'},
-                            {label: 'Currency', value: d.currency},
-                            {label: 'Country', value: d.country},
-                            {label: 'Quote Type', value: d.quote_type},
-                            {label: 'Employees', value: d.employees ? Number(d.employees).toLocaleString() : 'N/A'},
-                            {label: 'Website', value: d.website ? '<a href="' + d.website + '" target="_blank" rel="noopener">' + d.website + '</a>' : 'N/A'},
-                            {label: 'Added', value: d.created_at ? new Date(d.created_at).toLocaleString() : 'N/A'},
-                            {label: 'Last Updated', value: d.updated_at ? new Date(d.updated_at).toLocaleString() : 'N/A'}
-                        ];
-                        let html = '';
-                        fields.forEach(f => {
-                            html += '<div class="info-item"><label>' + f.label + '</label><div class="info-value">' + (f.value || 'N/A') + '</div></div>';
-                        });
-                        if (d.description) {
-                            html += '<div class="info-item" style="grid-column: 1 / -1;"><label>Description</label><div class="info-value" style="font-size: 0.9rem; line-height: 1.5;">' + d.description + '</div></div>';
-                        }
-                        document.getElementById('stock-info-grid').innerHTML = html;
-                    } else {
-                        document.getElementById('stock-detail-title').textContent = symbol + ' - Not Found';
-                        document.getElementById('stock-info-grid').innerHTML = '<div class="empty-state">Ticker not found in database.</div>';
-                    }
-                })
-                .catch(err => {
-                    document.getElementById('stock-info-grid').innerHTML = '<div class="empty-state">Error loading ticker info.</div>';
-                });
-        }
-
-        function loadPriceHistory() {
-            if (!currentDetailSymbol) return;
-            const days = document.getElementById('history-period').value;
-            fetch('/api/ticker/' + encodeURIComponent(currentDetailSymbol) + '/history?days=' + days)
-                .then(r => r.json())
-                .then(data => {
-                    if (data.status === 'success' && data.data && data.data.length > 0) {
-                        let html = '<table class="data-table"><thead><tr><th>Date</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>';
-                        data.data.forEach(row => {
-                            html += '<tr><td>' + row.date + '</td><td>' + (row.open != null ? row.open.toFixed(2) : '-') + '</td><td>' + (row.high != null ? row.high.toFixed(2) : '-') + '</td><td>' + (row.low != null ? row.low.toFixed(2) : '-') + '</td><td>' + (row.close != null ? row.close.toFixed(2) : '-') + '</td><td>' + (row.volume != null ? Number(row.volume).toLocaleString() : '-') + '</td></tr>';
-                        });
-                        html += '</tbody></table>';
-                        document.getElementById('price-history-table').innerHTML = html;
-                    } else {
-                        document.getElementById('price-history-table').innerHTML = '<div class="empty-state">No price history available.</div>';
-                    }
-                })
-                .catch(err => {
-                    document.getElementById('price-history-table').innerHTML = '<div class="empty-state">Error loading price history.</div>';
-                });
-        }
-
-        function loadUpdateHistory(symbol) {
-            fetch('/api/ticker/' + encodeURIComponent(symbol) + '/updates')
-                .then(r => r.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        // Render summary
-                        let summaryHtml = '';
-                        if (data.summary) {
-                            const s = data.summary;
-                            summaryHtml = '<div class="summary-cards">' +
-                                '<div class="summary-card"><div class="summary-value">' + s.total_updates + '</div><div class="summary-label">Total Updates</div></div>' +
-                                '<div class="summary-card"><div class="summary-value">' + s.successful_updates + '</div><div class="summary-label">Successful</div></div>' +
-                                '<div class="summary-card"><div class="summary-value">' + s.failed_updates + '</div><div class="summary-label">Failed</div></div>' +
-                                '<div class="summary-card"><div class="summary-value">' + (s.total_records_updated || 0).toLocaleString() + '</div><div class="summary-label">Records Updated</div></div>' +
-                                '<div class="summary-card"><div class="summary-value" style="font-size: 0.9rem;">' + (s.first_update ? new Date(s.first_update).toLocaleDateString() : 'N/A') + '</div><div class="summary-label">First Update</div></div>' +
-                                '<div class="summary-card"><div class="summary-value" style="font-size: 0.9rem;">' + (s.last_update ? new Date(s.last_update).toLocaleDateString() : 'N/A') + '</div><div class="summary-label">Last Update</div></div>' +
-                                '</div>';
-                        }
-                        document.getElementById('update-summary').innerHTML = summaryHtml;
-
-                        // Render table
-                        if (data.data && data.data.length > 0) {
-                            let html = '<table class="data-table"><thead><tr><th>Date</th><th>Type</th><th>Records</th><th>Status</th><th>Error</th></tr></thead><tbody>';
-                            data.data.forEach(row => {
-                                const badge = row.status === 'success'
-                                    ? '<span class="status-badge success">Success</span>'
-                                    : '<span class="status-badge error">Error</span>';
-                                html += '<tr><td>' + new Date(row.updated_at).toLocaleString() + '</td><td>' + row.update_type + '</td><td>' + row.records_updated + '</td><td>' + badge + '</td><td>' + (row.error_message || '-') + '</td></tr>';
-                            });
-                            html += '</tbody></table>';
-                            document.getElementById('update-history-table').innerHTML = html;
-                        } else {
-                            document.getElementById('update-history-table').innerHTML = '<div class="empty-state">No update history available for this ticker.</div>';
-                        }
-                    } else {
-                        document.getElementById('update-summary').innerHTML = '';
-                        document.getElementById('update-history-table').innerHTML = '<div class="empty-state">Ticker not found.</div>';
-                    }
-                })
-                .catch(err => {
-                    document.getElementById('update-summary').innerHTML = '';
-                    document.getElementById('update-history-table').innerHTML = '<div class="empty-state">Error loading update history.</div>';
-                });
-        }
-    </script>
+<div id="notifications"></div>
 </body>
 </html>

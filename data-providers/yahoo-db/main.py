@@ -7,6 +7,7 @@ Uses a persistent database connection with automatic reconnection.
 
 import atexit
 import json
+import mimetypes
 import os
 import sys
 import time
@@ -21,6 +22,7 @@ from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 
 from database import DatabaseManager
+from scheduler import DailyScheduler, ScheduleConfig
 from split_check import SplitChecker
 from yahoo_finance import YahooFinanceClient
 
@@ -52,9 +54,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Windows can map .js to text/plain in the registry; browsers refuse such ES modules.
+mimetypes.add_type("text/javascript", ".js")
+
 # Flask application
 app = Flask(__name__)
-CORS(app)
+# Other web sites may read the API, but not change anything (no cross-origin POST/PUT preflights).
+CORS(app, methods=["GET", "HEAD", "OPTIONS"])
 
 
 class StockDataService:
@@ -67,6 +73,7 @@ class StockDataService:
         Args:
             config_path: Path to the configuration file.
         """
+        self.config_path = Path(config_path).resolve()
         self.config = self._load_config(config_path)
         self.base_path = Path(os.path.dirname(os.path.abspath(__file__)))
         
@@ -102,6 +109,39 @@ class StockDataService:
         self.db.connect()
         self.db.initialize_tables()
         logger.info("Persistent database connection established")
+
+        self.scheduler = DailyScheduler(
+            self._schedule_from_config(),
+            self.run_scheduled_sync,
+            Path(db_path).parent / "schedule_state.json",
+        )
+
+    def _schedule_from_config(self) -> ScheduleConfig:
+        raw = self.config.get('scheduling') or {}
+        known = {k: v for k, v in raw.items() if k in ('enabled', 'run_time', 'timezone', 'catch_up')}
+        try:
+            return ScheduleConfig.from_dict(known)
+        except ValueError as e:
+            logger.error(f"Invalid 'scheduling' in config.json ({e}); using {ScheduleConfig()}")
+            return ScheduleConfig()
+
+    def save_schedule(self, schedule: ScheduleConfig):
+        """Apply a new daily schedule and store it in config.json."""
+        config = json.loads(json.dumps(self.config))
+        config['scheduling'] = {**(config.get('scheduling') or {}), **schedule.to_dict()}
+        tmp = self.config_path.with_suffix('.json.tmp')
+        tmp.write_text(json.dumps(config, indent=4) + '\n', encoding='utf-8')
+        tmp.replace(self.config_path)
+        self.config = config
+        self.scheduler.update(schedule)
+
+    def run_scheduled_sync(self) -> str:
+        """Job of the daily scheduler: run a full sync and wait for it; returns the outcome."""
+        result = self.start_sync()
+        if result.get('status') != 'success':
+            return f"skipped: {result.get('error', 'could not start')}"
+        self.sync_thread.join()
+        return self.sync_status
         
     def _resolve_path(self, relative_path: str) -> str:
         """Resolve a relative path to an absolute path."""
@@ -185,13 +225,16 @@ class StockDataService:
     def get_status(self) -> dict:
         """Get current service status."""
         ticker_count = len(self.db.get_all_tickers())
+        schedule = self.scheduler.status()
         
         return {
+            "version": self.config.get('version'),
             "sync_running": self.sync_running,
             "sync_status": self.sync_status,
             "last_sync_time": self.last_sync_time.isoformat() if self.last_sync_time else None,
             "ticker_count": ticker_count,
-            "progress": self.sync_progress
+            "progress": self.sync_progress,
+            "schedule": {k: schedule[k] for k in ('enabled', 'run_time', 'timezone', 'next_run')},
         }
     
     def start_sync(self):
@@ -199,6 +242,7 @@ class StockDataService:
         if self.sync_running:
             return {"error": "Sync already running", "status": "error"}
         
+        self.sync_running = True
         self.sync_thread = threading.Thread(target=self._run_sync_thread)
         self.sync_thread.daemon = True
         self.sync_thread.start()
@@ -223,7 +267,7 @@ class StockDataService:
         
         try:
             self.run_sync()
-            self.sync_status = "completed"
+            self.sync_status = "stopped" if self.sync_status == "stopping" else "completed"
         except Exception as e:
             logger.error(f"Sync failed: {e}")
             self.sync_status = f"error: {str(e)}"
@@ -491,6 +535,7 @@ service = StockDataService()
 
 # Register shutdown hook to close the persistent database connection
 atexit.register(service.db.shutdown)
+atexit.register(service.scheduler.stop)
 
 
 # ============== Web Routes ==============
@@ -742,6 +787,34 @@ def api_check_ticker_splits(symbol: str):
                     "splits": [{"date": d, "ratio": r} for d, r in result['splits']]})
 
 
+@app.route('/api/schedule', methods=['GET'])
+def api_get_schedule():
+    """Daily update schedule, the next run and the outcome of the last scheduled run."""
+    return jsonify({"status": "success", "data": service.scheduler.status()})
+
+
+@app.route('/api/schedule', methods=['PUT'])
+def api_put_schedule():
+    """
+    Change the daily update schedule (stored in config.json).
+
+    Request body (all optional): {"enabled": true, "run_time": "23:30",
+                                  "timezone": "America/New_York" | "local", "catch_up": true}
+    """
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json", "status": "error"}), 415
+    try:
+        schedule = ScheduleConfig.from_dict(request.get_json(silent=True), defaults=service.scheduler.config)
+    except ValueError as e:
+        return jsonify({"error": str(e), "status": "error"}), 400
+    try:
+        service.save_schedule(schedule)
+    except OSError as e:
+        logger.error(f"Cannot write {service.config_path}: {e}")
+        return jsonify({"error": "Cannot save the schedule to config.json", "status": "error"}), 500
+    return jsonify({"status": "success", "data": service.scheduler.status()})
+
+
 def main():
     """Main entry point for the Flask application."""
     print("""
@@ -758,6 +831,7 @@ def main():
     debug = service.config.get('web', {}).get('debug', False)
     
     logger.info(f"Starting Flask server on {host}:{port}")
+    service.scheduler.start()
     app.run(host=host, port=port, debug=debug, threaded=True)
 
 

@@ -395,6 +395,46 @@ curl -X POST http://localhost:5000/api/ticker/ETHA/check-splits
 
 ---
 
+### 11. Daily Update Schedule
+
+**Endpoint:** `GET /api/schedule`
+
+The schedule, the next run (UTC), and the last scheduled run.
+
+```json
+{
+    "status": "success",
+    "data": {
+        "enabled": true,
+        "run_time": "23:30",
+        "timezone": "Asia/Jerusalem",
+        "catch_up": true,
+        "next_run": "2026-11-11T21:30:00+00:00",
+        "next_run_is_catch_up": false,
+        "running_since": null,
+        "last_run": {"scheduled_for": "2026-11-10T21:30:00+00:00", "started_at": "...", "finished_at": "...", "result": "completed"},
+        "server_time": "2026-11-11T12:00:00+00:00"
+    }
+}
+```
+
+**Endpoint:** `PUT /api/schedule` (`Content-Type: application/json`)
+
+Change the schedule; it applies at once and is saved in `config.json`. All fields are optional:
+
+```json
+{"enabled": true, "run_time": "23:30", "timezone": "Asia/Jerusalem", "catch_up": true}
+```
+
+`timezone` is an IANA name or `"local"` (the server's clock). **Error Responses:** 400 invalid value
+(e.g. `run_time` not `HH:MM`, unknown time zone), 415 not JSON, 500 `config.json` not writable.
+
+```bash
+curl -X PUT http://localhost:5000/api/schedule -H "Content-Type: application/json" -d '{"run_time": "23:30"}'
+```
+
+---
+
 ## HTTP Status Codes
 
 | Code | Description |
@@ -414,7 +454,10 @@ The API does not currently implement rate limiting, but please be considerate of
 
 ## CORS
 
-Cross-Origin Resource Sharing (CORS) is enabled for all endpoints, allowing access from web applications hosted on different domains.
+Cross-Origin Resource Sharing (CORS) allows web applications on other domains to **read** the API (GET).
+Requests with a JSON body (adding a ticker, changing the schedule) need a CORS preflight, which other origins
+don't pass, so other web sites can't send them in the background. Scripts and the finance aggregator are not
+affected (CORS only applies to browsers).
 
 ---
 

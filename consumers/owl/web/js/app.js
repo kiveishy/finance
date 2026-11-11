@@ -2,7 +2,9 @@
 import { ApiClient, ApiError, loadConnection, saveConnection } from "./api.js";
 import { ChartView, DEFAULT_INDICATORS, INDICATOR_COLORS, indicatorKey, indicatorLabel } from "./chart.js";
 import { ConnectionMonitor, State } from "./connection.js";
+import { LineDrawings, MAX_LINES_PER_SYMBOL } from "./drawings.js";
 import { Explorer } from "./explorer.js";
+import { describeMarket } from "./market.js";
 import { SettingsPage, SettingsStore } from "./settings.js";
 import { confirm, el, formatNumber, icon, notify, prompt } from "./ui.js";
 
@@ -31,6 +33,9 @@ class OwlApp {
         });
         this.settings.addEventListener("change", (e) => this.applySettings(e.detail.keys));
         this.indicators = DEFAULT_INDICATORS.map((i) => ({ ...i }));
+        this.drawings = {}; // symbol -> trend lines
+        this.lineTool = null;
+        this.lineSymbol = null; // symbol whose lines are on the chart
         this.groups = [];
         this.chart = null;
         this.chartRequest = 0;
@@ -48,6 +53,8 @@ class OwlApp {
             onPickMoveTarget: (from, symbol) => this.pickMoveTarget(from, symbol),
         });
         this.applySettings();
+        this.renderMarketStatus();
+        setInterval(() => this.renderMarketStatus(), 15_000);
         this.bindEvents();
         this.renderToolbar();
     }
@@ -64,6 +71,11 @@ class OwlApp {
                 key: "workbench.explorerWidth", section: "Workbench", title: "Explorer Width", type: "number",
                 description: "Width of the Explorer. You can also drag the Explorer's edge.",
                 min: 170, max: 600, unit: "px", default: 260,
+            },
+            {
+                key: "workbench.showMarketStatus", section: "Workbench", title: "Show Market Status", type: "boolean",
+                description: "Show in the title bar whether the US stock market (NYSE / Nasdaq) is open, in pre-market, after hours or closed, and when it opens or closes. Computed locally in New York time, including NYSE holidays and early closes.",
+                default: true,
             },
             {
                 key: "explorer.showPrices", section: "Explorer", title: "Show Prices", type: "boolean",
@@ -94,6 +106,17 @@ class OwlApp {
                 },
             },
             {
+                key: "chart.drawings", section: "Chart", title: "Trend Lines", type: "action",
+                description: "Lines drawn with the Line tool of the chart toolbar. Click a line to select it, drag it to move it, drag an end to stretch it, press Delete to remove it. They are saved per symbol on the server.",
+                detail: () => {
+                    const counts = Object.values(this.drawings).map((lines) => lines.length);
+                    const total = counts.reduce((sum, n) => sum + n, 0);
+                    return `${total} line${total === 1 ? "" : "s"} on ${counts.length} symbol${counts.length === 1 ? "" : "s"}`;
+                },
+                button: "Delete all lines…",
+                run: () => this.clearAllDrawings(),
+            },
+            {
                 key: "connection.server", section: "Connection", title: "Owl Server", type: "action",
                 description: "Address and API key of the owl server. Only needed when the UI isn't served by owl itself (e.g. the Android app). Stored on this device only.",
                 detail: () => loadConnection().url || "This owl server",
@@ -114,6 +137,7 @@ class OwlApp {
         const changed = (key) => keys === null || keys.includes(key);
         const s = this.settings;
         document.body.classList.toggle("explorer-right", s.get("workbench.explorerPosition") === "right");
+        document.body.classList.toggle("hide-market-status", !s.get("workbench.showMarketStatus"));
         document.documentElement.style.setProperty("--sidebar-width", `${s.get("workbench.explorerWidth")}px`);
         document.body.classList.toggle("hide-prices", !s.get("explorer.showPrices"));
         document.body.classList.toggle("hide-change", !s.get("explorer.showChange"));
@@ -123,6 +147,14 @@ class OwlApp {
             this.quoteTimer = setInterval(() => this.refreshQuotes(), s.get("explorer.priceRefreshSeconds") * 1000);
         }
         if (keys !== null && changed("explorer.showPrices") && s.get("explorer.showPrices")) this.refreshQuotes();
+    }
+
+    renderMarketStatus() {
+        const market = describeMarket();
+        const node = $("market-status");
+        node.className = `market-status ${market.state}`;
+        node.textContent = market.text;
+        node.title = market.title;
     }
 
     openSettings() {
@@ -168,6 +200,9 @@ class OwlApp {
             "zoom-out": () => this.chart?.zoom(1.4),
             "zoom-reset": () => this.chart?.resetZoom(),
             "reload-chart": () => this.loadChart(),
+            "draw-line": () => this.toggleLineDrawing(),
+            "delete-line": () => this.lineTool?.deleteSelected(),
+            "clear-lines": () => this.clearLines(),
         };
         document.addEventListener("click", (event) => {
             const target = event.target.closest("[data-action]");
@@ -181,6 +216,12 @@ class OwlApp {
             } else if ((event.ctrlKey || event.metaKey) && event.key === ",") {
                 event.preventDefault();
                 this.openSettings();
+            } else if (this.lineTool && this.activeSymbol && !event.target.closest("input, textarea, select") && $("quickinput").hidden) {
+                if (event.key === "Escape") this.lineTool.cancelDrawing();
+                else if ((event.key === "Delete" || event.key === "Backspace") && this.lineTool.selected) {
+                    event.preventDefault();
+                    this.lineTool.deleteSelected();
+                }
             }
         });
         $("toggle-sidebar").addEventListener("click", () => document.body.classList.toggle("sidebar-open"));
@@ -484,6 +525,15 @@ class OwlApp {
         if (!symbol) return;
         const requestId = ++this.chartRequest;
         this.chart ??= new ChartView($("chart-container"), $("legend"));
+        this.lineTool ??= new LineDrawings(this.chart, {
+            onChange: (lines) => this.saveDrawings(this.lineSymbol, lines),
+            onState: () => this.renderLineTools(),
+        });
+        if (this.lineSymbol !== symbol) {
+            this.lineSymbol = symbol;
+            this.lineTool.setBars([]);
+            this.lineTool.setLines(this.drawings[symbol] ?? []);
+        }
         this.renderBreadcrumbs(symbol, null);
         if (!this.connection.healthy && this.connection.state !== State.CHECKING) {
             this.chartPending = true;
@@ -500,6 +550,7 @@ class OwlApp {
             });
             if (requestId !== this.chartRequest) return;
             this.chart.setData(payload, this.indicators);
+            this.lineTool.setBars(payload.bars);
             this.showChartMessage(null);
             this.renderBreadcrumbs(symbol, payload);
             this.renderSources(payload);
@@ -560,6 +611,68 @@ class OwlApp {
             saved = JSON.parse(localStorage.getItem("owl.chart") || "null");
         }
         if (saved?.indicators?.length) this.indicators = saved.indicators;
+        await this.loadDrawings();
+    }
+
+    // ---- trend lines -------------------------------------------------------------------------
+
+    async loadDrawings() {
+        let saved;
+        try {
+            saved = await this.api.getSetting("drawings");
+        } catch {
+            try {
+                saved = JSON.parse(localStorage.getItem("owl.drawings") || "null");
+            } catch {
+                saved = null;
+            }
+        }
+        this.drawings = saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {};
+        if (this.lineTool && this.lineSymbol && !this.lineTool.drag) this.lineTool.setLines(this.drawings[this.lineSymbol] ?? []);
+    }
+
+    async saveDrawings(symbol, lines) {
+        if (!symbol) return;
+        if (lines.length) this.drawings[symbol] = lines;
+        else delete this.drawings[symbol];
+        localStorage.setItem("owl.drawings", JSON.stringify(this.drawings));
+        try {
+            await this.api.putSetting("drawings", this.drawings);
+        } catch (err) {
+            this.reportError("Saving lines failed", err);
+        }
+    }
+
+    toggleLineDrawing() {
+        if (!this.lineTool) return;
+        if (this.lineTool.drawing) this.lineTool.cancelDrawing();
+        else if (!this.lineTool.startDrawing()) notify(`At most ${MAX_LINES_PER_SYMBOL} lines per symbol`, "warning");
+    }
+
+    async clearLines() {
+        const count = this.lineTool?.lines.length ?? 0;
+        if (!count || !(await confirm(`Delete all ${count} line${count === 1 ? "" : "s"} of ${this.lineSymbol}?`, "Delete"))) return;
+        this.lineTool.deleteAll();
+    }
+
+    async clearAllDrawings() {
+        if (!Object.keys(this.drawings).length || !(await confirm("Delete the lines of all symbols?", "Delete"))) return;
+        this.drawings = {};
+        this.lineTool?.setLines([]);
+        localStorage.setItem("owl.drawings", "{}");
+        try {
+            await this.api.putSetting("drawings", {});
+        } catch (err) {
+            this.reportError("Saving lines failed", err);
+        }
+        this.settingsPage.render();
+    }
+
+    renderLineTools() {
+        const tool = this.lineTool;
+        $("draw-line-button").classList.toggle("active", Boolean(tool?.drawing));
+        $("delete-line-button").disabled = !tool?.selected;
+        $("clear-lines-button").disabled = !tool?.lines.length;
     }
 
     async saveIndicators() {
