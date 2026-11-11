@@ -9,7 +9,8 @@ executable on Windows and Linux, and as an Android APK (a Capacitor wrapper arou
 
 | Area | What you get |
 |------|--------------|
-| **Watchlist** | Groups shown as folders in the Explorer, with symbols inside. You can create, rename and delete groups, and add or remove symbols. Symbols are validated against the aggregator and company names are shown next to them. The same symbol can be in several groups |
+| **Watchlist** | Groups shown as folders in the Explorer, with symbols inside. You can create, rename and delete groups, and add or remove symbols. Symbols are validated against the aggregator and company names are shown next to them. The same symbol can be in several groups. Every symbol shows its **last price and day change** (green/red). Prices refresh every 60 s; the server caches them and prefetches them at startup |
+| **Drag and drop** | Drag a symbol onto another group to **move** it, or **Ctrl+drag** (Alt on macOS) to **copy** it. Dropping onto a symbol inserts it before that one, which also reorders symbols within a group. On touch screens, where dragging isn't available, the **Move to group…** row action does the same |
 | **Interactive search** | **Ctrl+P** (Go to symbol) and **Add symbol** suggest matches as you type, by ticker *or* company name (`nvid`, `apple`, `berkshire`). **Add symbol** asks for the stock first and only then for the group (skipped when there is a single group or when started from a group's **+** button); groups that already contain the stock are marked. Each match shows the symbol, the company name with the typed text highlighted, the exchange and type (Stock, ETF, Index, Future, ...), and which watchlist groups already contain it ("already in this group" when adding). Watchlist symbols appear instantly, and data-provider results follow after a 200 ms debounce. Arrow keys move through the list. Enter takes the highlighted match; pressed while results are still loading, it waits for them. A typed ticker that isn't listed is still accepted |
 | **Ranges** | 1D · 1W · 1M · 3M · 6M · 1Y · 2Y · 5Y · ALL |
 | **Candle interval** | Auto (daily up to 2Y, weekly for 5Y, monthly for ALL) or forced D / W / M |
@@ -79,6 +80,8 @@ All responses have the shape `{"status": "success", "data": ...}` or `{"status":
 | DELETE | `/api/groups/{id}` | Delete a group |
 | POST | `/api/groups/{id}/items` `{"symbol"}` | Add a symbol (validated through the aggregator) |
 | DELETE | `/api/groups/{id}/items/{symbol}` | Remove a symbol |
+| POST | `/api/groups/{id}/items/{symbol}/move` `{"to", "copy"?, "before"?}` | Move (or copy) a symbol to group `to`, before symbol `before` (default: at the end). With `to` = the same group it reorders. Returns all groups |
+| GET | `/api/quotes?symbols=AAPL,MSFT` | Last close, previous close and change per symbol (`null` when there is no data). Cached for 60 s, at most 200 symbols |
 | GET | `/api/ticker/{symbol}` | Ticker information |
 | GET | `/api/search?q=QUERY[&limit=N]` | Type-ahead symbol search through the aggregator (ticker or company name). Each match also lists the watchlist `groups` that contain it |
 | GET | `/api/chart/{symbol}?range=6M&interval=D&indicators=sma:20,ema:9` | Bars (with `source`), indicator series, quote, `visible_from`, `sources` |

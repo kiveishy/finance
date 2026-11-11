@@ -20,6 +20,7 @@ from finance_aggregator.logging_setup import configure_logging
 from . import __version__
 from .browser import BrowserLauncher
 from .charts import ChartService
+from .quotes import QuoteService
 from .config import OwlConfig, app_home, bundle_dir, default_config_path
 from .market_data import MarketData, create_market_data
 from .server import OwlApi, OwlServer, StaticFiles
@@ -57,7 +58,9 @@ class OwlApplication:
                                        recheck_seconds=config.splits.recheck_hours * 3600).correct
         self.static = StaticFiles(config.web_root or default_web_root())
         charts = ChartService(self.market, corrector=corrector)
-        self.api = OwlApi(self.market, self.watchlist, charts, web_build=self.static.build_id)
+        # No split correction for quotes: the last bars are always on today's price scale.
+        self.quotes = QuoteService(self.market)
+        self.api = OwlApi(self.market, self.watchlist, charts, web_build=self.static.build_id, quotes=self.quotes)
 
     def create_server(self) -> OwlServer:
         server = self.config.server
@@ -76,7 +79,17 @@ class OwlApplication:
             except Exception as exc:  # noqa: BLE001 - best effort, retried on next start
                 logger.info("Could not look up name of %s: %s", symbol, exc)
 
+    def warm_quotes(self) -> None:
+        """Fetch the watchlist prices in the background so the first page load shows them at once."""
+        symbols = sorted({s for g in self.watchlist.list_groups() for s in g.symbols})
+        try:
+            if symbols:
+                self.quotes.quotes(symbols)
+        except Exception as exc:  # noqa: BLE001 - best effort
+            logger.info("Could not prefetch watchlist prices: %s", exc)
+
     def close(self) -> None:
+        self.quotes.close()
         self.watchlist.close()
         if self.split_store is not None:
             self.split_store.close()
@@ -137,6 +150,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         with OwlApplication(config) as app, app.create_server() as server:
             print(f"Owl is running at {server.url}  (Ctrl+C to stop)", flush=True)
             threading.Thread(target=app.backfill_names, name="name-backfill", daemon=True).start()
+            threading.Thread(target=app.warm_quotes, name="quote-warmup", daemon=True).start()
             if open_browser:
                 browser.open(server.url)
             while not stop.wait(0.5):

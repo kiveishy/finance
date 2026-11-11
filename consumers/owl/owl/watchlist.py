@@ -78,6 +78,16 @@ class WatchlistRepository(ABC):
     def remove_item(self, group_id: int, symbol: str) -> Group: ...
 
     @abstractmethod
+    def move_item(
+        self, from_group_id: int, symbol: str, to_group_id: int, *, copy: bool = False, before: str | None = None
+    ) -> tuple[Group, Group]:
+        """Move (or copy) a symbol to another group, placed before `before` (default: at the end).
+
+        With the same source and target group this reorders the symbol inside the group.
+        Returns the (source, target) groups after the change.
+        """
+
+    @abstractmethod
     def set_symbol_name(self, symbol: str, name: str) -> None:
         """Store the display name of a symbol in every group containing it."""
 
@@ -186,6 +196,37 @@ class SqliteWatchlistRepository(WatchlistRepository):
             if deleted == 0:
                 raise ResourceNotFoundError(f"{symbol} is not in group {group.name!r}")
             return self._group_or_404(group_id)
+
+    def move_item(
+        self, from_group_id: int, symbol: str, to_group_id: int, *, copy: bool = False, before: str | None = None
+    ) -> tuple[Group, Group]:
+        symbol = normalize_symbol(symbol)
+        before = normalize_symbol(before) if before else None
+        same = from_group_id == to_group_id
+        with self._lock, self._conn:
+            source = self._group_or_404(from_group_id)
+            item = next((i for i in source.items if i.symbol == symbol), None)
+            if item is None:
+                raise ResourceNotFoundError(f"{symbol} is not in group {source.name!r}")
+            target = source if same else self._group_or_404(to_group_id)
+            if same and copy:
+                raise ValidationError("A symbol can't be copied into its own group")
+            if not same:
+                if symbol in target.symbols:
+                    raise ConflictError(f"{symbol} is already in group {target.name!r}")
+                if len(target.items) >= MAX_SYMBOLS_PER_GROUP:
+                    raise ValidationError(f"A group can hold at most {MAX_SYMBOLS_PER_GROUP} symbols")
+
+            order = [s for s in target.symbols if s != symbol]
+            order.insert(order.index(before) if before in order else len(order), symbol)
+            if not same:
+                if not copy:
+                    self._conn.execute("DELETE FROM group_items WHERE group_id = ? AND symbol = ?", (from_group_id, symbol))
+                self._conn.execute("INSERT INTO group_items(group_id, symbol, name, position) VALUES (?, ?, ?, 0)",
+                                   (to_group_id, symbol, item.name))
+            self._conn.executemany("UPDATE group_items SET position = ? WHERE group_id = ? AND symbol = ?",
+                                   [(index, to_group_id, s) for index, s in enumerate(order)])
+            return self._group_or_404(from_group_id), self._group_or_404(to_group_id)
 
     def set_symbol_name(self, symbol: str, name: str) -> None:
         with self._lock, self._conn:

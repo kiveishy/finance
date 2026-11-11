@@ -67,6 +67,32 @@ def test_items(repo: SqliteWatchlistRepository) -> None:
         repo.remove_item(group.id, "NVDA")
 
 
+def test_move_copy_and_reorder(repo: SqliteWatchlistRepository) -> None:
+    tech = repo.create_group("Tech", [WatchItem("AAPL", "Apple"), WatchItem("MSFT"), WatchItem("NVDA", "NVIDIA")])
+    semis = repo.create_group("Semis", [WatchItem("AMD"), WatchItem("INTC")])
+
+    source, target = repo.move_item(tech.id, "nvda", semis.id)  # default: to the end
+    assert source.symbols == ("AAPL", "MSFT") and target.symbols == ("AMD", "INTC", "NVDA")
+    assert target.items[2].name == "NVIDIA"  # display name travels with the symbol
+
+    _, target = repo.move_item(tech.id, "AAPL", semis.id, copy=True, before="INTC")
+    assert target.symbols == ("AMD", "AAPL", "INTC", "NVDA")
+    assert repo.get_group(tech.id).symbols == ("AAPL", "MSFT")  # copy keeps the original
+
+    _, reordered = repo.move_item(semis.id, "NVDA", semis.id, before="AMD")
+    assert reordered.symbols == ("NVDA", "AMD", "AAPL", "INTC")
+
+    with pytest.raises(ConflictError):
+        repo.move_item(tech.id, "AAPL", semis.id)  # already there
+    with pytest.raises(ResourceNotFoundError):
+        repo.move_item(tech.id, "NVDA", semis.id)  # not in the source any more
+    with pytest.raises(ResourceNotFoundError):
+        repo.move_item(tech.id, "MSFT", 9999)
+    with pytest.raises(ValidationError):
+        repo.move_item(semis.id, "AMD", semis.id, copy=True)
+    assert repo.get_group(tech.id).symbols == ("AAPL", "MSFT")  # failed moves change nothing
+
+
 def test_same_symbol_in_several_groups_and_cascade_delete(repo: SqliteWatchlistRepository) -> None:
     a, b = repo.create_group("A"), repo.create_group("B")
     repo.add_item(a.id, WatchItem("AAPL"))

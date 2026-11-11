@@ -75,6 +75,13 @@ export class ApiClient {
     removeSymbol(groupId, symbol) {
         return this.request("DELETE", `/api/groups/${groupId}/items/${encodeURIComponent(symbol)}`);
     }
+    moveSymbol(fromGroupId, symbol, toGroupId, { copy = false, before = null } = {}) {
+        return this.request("POST", `/api/groups/${fromGroupId}/items/${encodeURIComponent(symbol)}/move`,
+            { to: toGroupId, copy, before });
+    }
+    quotes(symbols) {
+        return this.request("GET", `/api/quotes?${new URLSearchParams({ symbols: symbols.join(",") })}`);
+    }
     ticker(symbol) { return this.request("GET", `/api/ticker/${encodeURIComponent(symbol)}`); }
     search(query, limit = 12) {
         return this.request("GET", `/api/search?${new URLSearchParams({ q: query, limit: String(limit) })}`);

@@ -1,24 +1,39 @@
 // Explorer tree: groups (folders) containing symbols, VS Code style.
-import { el, icon } from "./ui.js";
+import { el, formatNumber, icon } from "./ui.js";
 
 const EXPANDED_KEY = "owl.explorer.collapsed";
+const DRAG_TYPE = "application/x-owl-symbol";
 
 export class Explorer {
     /**
      * handlers: onOpen(symbol, groupId), onAddSymbol(groupId), onRemoveSymbol(groupId, symbol),
-     *           onRenameGroup(group), onDeleteGroup(group)
+     *           onRenameGroup(group), onDeleteGroup(group),
+     *           onMoveSymbol(fromGroupId, symbol, toGroupId, {copy, before}), onPickMoveTarget(groupId, symbol)
      */
     constructor(root, handlers) {
         this.root = root;
         this.handlers = handlers;
         this.groups = [];
+        this.quotes = {};
         this.selected = null; // {groupId, symbol}
+        this.dragging = null; // {groupId, symbol} while a row is dragged
+        this.renderPending = false;
         this.collapsed = new Set(JSON.parse(localStorage.getItem(EXPANDED_KEY) || "[]"));
     }
 
     setGroups(groups) {
         this.groups = groups;
         this.render();
+    }
+
+    /** quotes: {SYMBOL: {close, change, change_percent, date} | null}, merged into the known ones. */
+    setQuotes(quotes) {
+        Object.assign(this.quotes, quotes);
+        this.render();
+    }
+
+    get symbols() {
+        return [...new Set(this.groups.flatMap((g) => g.items.map((i) => i.symbol)))];
     }
 
     select(symbol, groupId = null) {
@@ -34,10 +49,15 @@ export class Explorer {
     }
 
     render() {
+        // Replacing the dragged row's element would cancel the drag: re-render when it ends.
+        if (this.dragging) {
+            this.renderPending = true;
+            return;
+        }
         const rows = [];
         for (const group of this.groups) {
             const open = !this.collapsed.has(group.id);
-            rows.push(el("div", {
+            rows.push(this.dropTarget(el("div", {
                 class: "tree-row group-row",
                 role: "treeitem",
                 "aria-expanded": String(open),
@@ -50,29 +70,95 @@ export class Explorer {
                 el("span", { class: "row-actions" },
                     this.action("add", "Add symbol to group", () => this.handlers.onAddSymbol(group.id)),
                     this.action("edit", "Rename group", () => this.handlers.onRenameGroup(group)),
-                    this.action("trash", "Delete group", () => this.handlers.onDeleteGroup(group)))));
+                    this.action("trash", "Delete group", () => this.handlers.onDeleteGroup(group)))), group, null));
             if (!open) continue;
             for (const item of group.items) {
                 const selected = this.selected && this.selected.symbol === item.symbol &&
                     (this.selected.groupId === null || this.selected.groupId === group.id);
-                rows.push(el("div", {
+                const row = el("div", {
                     class: "tree-row symbol-row" + (selected ? " selected" : ""),
                     role: "treeitem",
                     style: "padding-left: 22px",
-                    title: item.name ? `${item.symbol} — ${item.name}` : item.symbol,
+                    title: (item.name ? `${item.symbol} — ${item.name}` : item.symbol) +
+                        "\nDrag to another group to move it (Ctrl+drag copies)",
+                    draggable: "true",
                     onclick: () => this.handlers.onOpen(item.symbol, group.id),
+                    ondragstart: (event) => this.startDrag(event, group.id, item.symbol),
+                    ondragend: () => this.endDrag(),
                 },
                     icon("symbol-event"),
                     el("span", { class: "label" }, item.symbol),
                     el("span", { class: "description" }, item.name || ""),
+                    this.quoteCell(item.symbol),
                     el("span", { class: "row-actions" },
-                        this.action("close", "Remove from group", () => this.handlers.onRemoveSymbol(group.id, item.symbol)))));
+                        this.action("move", "Move to group…", () => this.handlers.onPickMoveTarget(group.id, item.symbol)),
+                        this.action("close", "Remove from group", () => this.handlers.onRemoveSymbol(group.id, item.symbol))));
+                rows.push(this.dropTarget(row, group, item.symbol));
             }
         }
         if (!this.groups.length) {
             rows.push(el("div", { class: "tree-row", style: "padding-left: 20px; color: var(--fg-muted)" }, "No groups yet"));
         }
         this.root.replaceChildren(...rows);
+    }
+
+    quoteCell(symbol) {
+        const quote = this.quotes[symbol];
+        if (!quote || quote.close == null) return el("span", { class: "quote" }, quote === null ? "—" : "");
+        const pct = quote.change_percent;
+        const direction = pct > 0 ? "up" : pct < 0 ? "down" : "";
+        return el("span", { class: "quote", title: `Last close ${quote.date}` },
+            el("span", { class: "price" }, formatNumber(quote.close, quote.close < 1 ? 4 : 2)),
+            pct == null ? null : el("span", { class: `change ${direction}` }, `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`));
+    }
+
+    // ---- drag and drop -------------------------------------------------------------------------
+
+    startDrag(event, groupId, symbol) {
+        this.dragging = { groupId, symbol };
+        event.dataTransfer.effectAllowed = "copyMove";
+        event.dataTransfer.setData(DRAG_TYPE, JSON.stringify(this.dragging));
+        event.dataTransfer.setData("text/plain", symbol);
+        event.currentTarget.classList.add("dragging");
+    }
+
+    endDrag() {
+        this.dragging = null;
+        this.root.querySelectorAll(".drop-into, .drop-before").forEach((n) => n.classList.remove("drop-into", "drop-before"));
+        if (this.renderPending) {
+            this.renderPending = false;
+            this.render();
+        } else {
+            this.root.querySelectorAll(".dragging").forEach((n) => n.classList.remove("dragging"));
+        }
+    }
+
+    /** Group rows accept a drop at the end of the group; symbol rows insert before themselves. */
+    dropTarget(row, group, beforeSymbol) {
+        const accepts = (event) => {
+            const drag = this.dragging;
+            if (!drag || !event.dataTransfer.types.includes(DRAG_TYPE)) return false;
+            if (drag.groupId !== group.id) return true;
+            return beforeSymbol !== null && beforeSymbol !== drag.symbol;  // reorder inside the group
+        };
+        const marker = beforeSymbol === null ? "drop-into" : "drop-before";
+        row.addEventListener("dragover", (event) => {
+            if (!accepts(event)) return;
+            event.preventDefault();
+            const copy = (event.ctrlKey || event.altKey) && this.dragging.groupId !== group.id;
+            event.dataTransfer.dropEffect = copy ? "copy" : "move";
+            row.classList.add(marker);
+        });
+        row.addEventListener("dragleave", () => row.classList.remove(marker));
+        row.addEventListener("drop", (event) => {
+            row.classList.remove(marker);
+            if (!accepts(event)) return;
+            event.preventDefault();
+            const drag = this.dragging;
+            const copy = (event.ctrlKey || event.altKey) && drag.groupId !== group.id;
+            this.handlers.onMoveSymbol(drag.groupId, drag.symbol, group.id, { copy, before: beforeSymbol });
+        });
+        return row;
     }
 
     action(name, title, handler) {

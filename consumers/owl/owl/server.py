@@ -36,6 +36,7 @@ from .charts import ChartRequest, ChartService
 from .config import ServerConfig
 from .errors import ConflictError, ResourceNotFoundError, ValidationError
 from .market_data import MarketData
+from .quotes import QuoteService
 from .watchlist import WatchItem, WatchlistRepository
 
 logger = logging.getLogger(__name__)
@@ -120,11 +121,13 @@ class OwlApi:
         *,
         status_ttl_seconds: float = 5.0,
         web_build: Callable[[], str] | None = None,
+        quotes: QuoteService | None = None,
     ) -> None:
         self._market = market
         self._watchlist = watchlist
         self._charts = charts
         self._web_build = web_build
+        self._quotes = quotes or QuoteService(market)
         self._status_ttl = status_ttl_seconds
         self._status_lock = threading.Lock()
         self._status_cache: tuple[float, ServiceStatus] | None = None
@@ -138,6 +141,8 @@ class OwlApi:
         r.add("DELETE", "/api/groups/{group_id}", self._delete_group)
         r.add("POST", "/api/groups/{group_id}/items", self._add_item)
         r.add("DELETE", "/api/groups/{group_id}/items/{symbol}", self._remove_item)
+        r.add("POST", "/api/groups/{group_id}/items/{symbol}/move", self._move_item)
+        r.add("GET", "/api/quotes", self._get_quotes)
         r.add("GET", "/api/ticker/{symbol}", self._ticker)
         r.add("GET", "/api/search", self._search)
         r.add("GET", "/api/chart/{symbol}", self._chart)
@@ -222,6 +227,24 @@ class OwlApi:
 
     def _remove_item(self, req: Request) -> Response:
         return ok(self._watchlist.remove_item(_group_id(req), req.params["symbol"]).to_dict())
+
+    def _move_item(self, req: Request) -> Response:
+        body = req.body if isinstance(req.body, dict) else {}
+        to_group = body.get("to")
+        if isinstance(to_group, bool) or not isinstance(to_group, int) or to_group <= 0:
+            raise ValidationError("JSON body with integer field 'to' (target group id) required")
+        before = body.get("before")
+        if before is not None and not isinstance(before, str):
+            raise ValidationError("'before' must be a symbol")
+        self._watchlist.move_item(_group_id(req), req.params["symbol"], to_group,
+                                  copy=bool(body.get("copy", False)), before=before or None)
+        return ok([g.to_dict() for g in self._watchlist.list_groups()])
+
+    def _get_quotes(self, req: Request) -> Response:
+        symbols = [s for s in req.query.get("symbols", "").split(",") if s.strip()]
+        if not symbols:
+            raise ValidationError("Query parameter 'symbols' required (comma separated)")
+        return ok(self._quotes.quotes(symbols))
 
     def _ticker(self, req: Request) -> Response:
         return ok(self._market.get_ticker_info(req.params["symbol"]).to_dict())

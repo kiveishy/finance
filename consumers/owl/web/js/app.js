@@ -8,6 +8,8 @@ import { confirm, el, formatNumber, icon, notify, prompt } from "./ui.js";
 const RANGES = ["1D", "1W", "1M", "3M", "6M", "1Y", "2Y", "5Y", "ALL"];
 const INTERVALS = [["", "Auto", "Interval chosen by range"], ["D", "D", "Daily candles"], ["W", "W", "Weekly candles"], ["M", "M", "Monthly candles"]];
 const UI_KEY = "owl.ui";
+const QUOTE_REFRESH_MS = 60_000;
+const QUOTES_PER_REQUEST = 200;
 const SYMBOL_RE = /^[A-Za-z0-9^][A-Za-z0-9.\-^=]{0,19}$/;
 const INDICATOR_RE = /^(sma|ema|ma)\s*[: ]?\s*(\d{1,4})$/i;
 const TYPE_LABELS = { EQUITY: "Stock", ETF: "ETF", MUTUALFUND: "Fund", INDEX: "Index", FUTURE: "Future", CRYPTOCURRENCY: "Crypto", CURRENCY: "FX" };
@@ -36,7 +38,10 @@ class OwlApp {
             onRemoveSymbol: (groupId, symbol) => this.removeSymbol(groupId, symbol),
             onRenameGroup: (group) => this.renameGroup(group),
             onDeleteGroup: (group) => this.deleteGroup(group),
+            onMoveSymbol: (from, symbol, to, options) => this.moveSymbol(from, symbol, to, options),
+            onPickMoveTarget: (from, symbol) => this.pickMoveTarget(from, symbol),
         });
+        setInterval(() => this.refreshQuotes(), QUOTE_REFRESH_MS);
         document.documentElement.style.setProperty("--sidebar-width", `${this.ui.sidebarWidth}px`);
         this.bindEvents();
         this.renderToolbar();
@@ -123,7 +128,55 @@ class OwlApp {
             this.explorer.select(this.ui.active);
         } catch (err) {
             this.reportError("Loading watchlist failed", err);
+            return;
         }
+        this.refreshQuotes();
+    }
+
+    /** Current price of every watchlist symbol (the server caches them for a minute). */
+    async refreshQuotes() {
+        if (!this.connection.healthy || this.quotesLoading) return;
+        const symbols = this.explorer.symbols;
+        if (!symbols.length) return;
+        this.quotesLoading = true;
+        try {
+            for (let i = 0; i < symbols.length; i += QUOTES_PER_REQUEST) {
+                this.explorer.setQuotes(await this.api.quotes(symbols.slice(i, i + QUOTES_PER_REQUEST)));
+            }
+        } catch {
+            /* prices are optional; the status bar already reports provider problems */
+        } finally {
+            this.quotesLoading = false;
+        }
+    }
+
+    async moveSymbol(fromGroupId, symbol, toGroupId, { copy = false, before = null } = {}) {
+        try {
+            this.groups = await this.api.moveSymbol(fromGroupId, symbol, toGroupId, { copy, before });
+            this.explorer.setGroups(this.groups);
+            this.explorer.select(this.ui.active);
+        } catch (err) {
+            this.reportError(copy ? "Copying symbol failed" : "Moving symbol failed", err);
+        }
+    }
+
+    async pickMoveTarget(fromGroupId, symbol) {
+        const others = this.groups.filter((g) => g.id !== fromGroupId);
+        if (!others.length) {
+            notify("Create another group first, then move symbols into it.", "info", 5000);
+            return;
+        }
+        const target = await prompt({
+            title: `Move ${symbol} to group`,
+            placeholder: "Select a group",
+            hint: "Tip: on a desktop you can also drag the symbol onto a group (Ctrl+drag copies)",
+            items: others.map((g) => {
+                const has = g.items.some((i) => i.symbol === symbol);
+                return { label: g.name, detail: has ? `already contains ${symbol}` : `${g.items.length} symbols`, value: g.id, icon: "folder" };
+            }),
+            allowCustom: false,
+        });
+        if (target !== null && target !== undefined) await this.moveSymbol(fromGroupId, symbol, target);
     }
 
     async pickGroup(title, symbol = null) {
@@ -523,6 +576,8 @@ class OwlApp {
         if (this.connection.serverReachable && !wasReachable) {
             this.loadSettings();
             this.refreshGroups();
+        } else if (this.connection.healthy && !wasHealthy) {
+            this.refreshQuotes();
         }
         if (this.connection.healthy && (!wasHealthy || this.chartPending)) this.loadChart();
         else if (!this.connection.healthy && wasHealthy && this.ui.active) this.loadChart();

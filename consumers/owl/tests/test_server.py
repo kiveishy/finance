@@ -103,6 +103,59 @@ class TestApi:
         assert call(api, "GET", "/api/search", q="a", limit="0")[0] == 400
 
 
+class TestMoveAndQuotes:
+    def test_move_endpoint(self, api: OwlApi) -> None:
+        watchlist_id = call(api, "GET", "/api/groups")[1]["data"][0]["id"]
+        semis_id = call(api, "POST", "/api/groups", {"name": "Semis"})[1]["data"]["id"]
+        status, body = call(api, "POST", f"/api/groups/{watchlist_id}/items/AAPL/move", {"to": semis_id})
+        assert status == 200
+        groups = {g["name"]: [i["symbol"] for i in g["items"]] for g in body["data"]}
+        assert "AAPL" not in groups["Watchlist"] and groups["Semis"] == ["AAPL"]
+        status, body = call(api, "POST", f"/api/groups/{semis_id}/items/AAPL/move", {"to": watchlist_id, "copy": True})
+        assert status == 200 and "AAPL" in [i["symbol"] for i in body["data"][0]["items"]]
+        assert call(api, "POST", f"/api/groups/{semis_id}/items/AAPL/move", {"to": watchlist_id})[0] == 409
+        assert call(api, "POST", f"/api/groups/{semis_id}/items/AAPL/move", {"to": "x"})[0] == 400
+        assert call(api, "POST", f"/api/groups/{semis_id}/items/MSFT/move", {"to": watchlist_id})[0] == 404
+
+    def test_quotes_endpoint(self, tmp_path: Path, market: FakeMarket) -> None:
+        from owl.quotes import QuoteService
+
+        repo = SqliteWatchlistRepository(tmp_path / "q.db")
+        quotes = QuoteService(market, today=lambda: TODAY)
+        api = OwlApi(market, repo, ChartService(market, today=lambda: TODAY), quotes=quotes)
+        status, body = call(api, "GET", "/api/quotes", symbols="aapl,ZZZZ")
+        assert status == 200
+        aapl = body["data"]["AAPL"]
+        assert aapl["close"] > aapl["previous_close"] and aapl["change_percent"] > 0
+        assert body["data"]["ZZZZ"] is None  # unknown symbol: no price, no error
+        assert call(api, "GET", "/api/quotes")[0] == 400
+        assert call(api, "GET", "/api/quotes", symbols="../x")[0] == 400
+        quotes.close()
+        repo.close()
+
+
+class TestQuoteService:
+    def test_cached_for_ttl_and_unavailable_providers_are_not_cached(self, market: FakeMarket) -> None:
+        from owl.quotes import QuoteService
+
+        now = [0.0]
+        service = QuoteService(market, today=lambda: TODAY, ttl_seconds=60, clock=lambda: now[0])
+        service.quotes(["AAPL"])
+        service.quotes(["AAPL"])
+        assert len(market.requests) == 1
+        now[0] += 61
+        service.quotes(["AAPL"])
+        assert len(market.requests) == 2
+
+        original = market.get_price_history
+        market.get_price_history = lambda *a, **k: (_ for _ in ()).throw(ProviderUnavailableError("down"))  # type: ignore[method-assign]
+        now[0] += 61
+        assert service.quotes(["AAPL"]) == {"AAPL": None}
+        market.get_price_history = original  # type: ignore[method-assign]
+        assert service.quotes(["AAPL"])["AAPL"] is not None  # outage result was not cached
+        service.close()
+
+
 class TestProviderStatus:
     def test_status_is_cached_and_refresh_forces_a_new_check(self, api: OwlApi, market: FakeMarket) -> None:
         status, body = call(api, "GET", "/api/status")
