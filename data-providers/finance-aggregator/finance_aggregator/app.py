@@ -138,10 +138,32 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     with Application(config) as app:
         if not args.command:
-            banner = (
-                f"finance-aggregator {__version__} - provider chain: "
-                f"{' -> '.join(p.name for p in app.providers) or '<empty>'}\n"
-                "Type 'help' for commands, 'exit' to quit."
-            )
-            return InteractiveShell(app.context, banner=banner).run()
+            return _interactive(app)
         return run_once(app.context, args.command)
+
+
+def _interactive(app: Application) -> int:
+    """The interactive shell, with the HTTP API served in the background (server.auto_start)."""
+    from .server import BackgroundApi
+
+    server = app.config.server
+    api = BackgroundApi(app.aggregator, app.aggregator, host=server.host, port=server.port, api_key=server.api_key)
+    app.context.api = api
+    if server.auto_start:
+        try:
+            api_line = f"HTTP API: {api.start()} (Owl and other consumers connect here; 'server stop' stops it)"
+        except OSError as exc:
+            logger.warning("HTTP API not started on %s: %s", api.url, exc)
+            api_line = f"HTTP API NOT started on {api.url}: {exc} - is another aggregator running? ('server start' retries)"
+    else:
+        api_line = f"HTTP API off (server.auto_start=false); 'server start' serves it on {api.url}"
+    banner = (
+        f"finance-aggregator {__version__} - provider chain: "
+        f"{' -> '.join(p.name for p in app.providers) or '<empty>'}\n"
+        f"{api_line}\n"
+        "Type 'help' for commands, 'exit' to quit."
+    )
+    try:
+        return InteractiveShell(app.context, banner=banner).run()
+    finally:
+        api.stop()

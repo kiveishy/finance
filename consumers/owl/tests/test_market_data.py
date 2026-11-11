@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import socket
 from datetime import date
 from pathlib import Path
@@ -100,21 +99,24 @@ def test_unreachable_aggregator() -> None:
     assert source.check_status().state is HealthState.UNAVAILABLE
 
 
-def test_embedded_mode_builds_aggregator_from_its_config(tmp_path: Path) -> None:
-    aggregator_config = tmp_path / "aggregator.json"
-    aggregator_config.write_text(json.dumps({"providers": [{"type": "yahoo_db_local", "options": {"db_path": "x.db"}}]}))
-    config = OwlConfig.from_dict({"aggregator": {"config_file": str(aggregator_config)}}, base_dir=tmp_path)
+def test_market_data_is_the_aggregator_service(tmp_path: Path) -> None:
+    config = OwlConfig.from_dict({"aggregator": {"url": "http://aggregator.lan:5100/", "api_key": "k"}}, base_dir=tmp_path)
     market = create_market_data(config.aggregator)
-    assert isinstance(market, AggregatorService)
-    assert [p.name for p in market.providers] == ["yahoo_db_local"]
+    assert isinstance(market, RemoteAggregatorSource)
+    assert market.name == "aggregator@http://aggregator.lan:5100"
+
+
+def test_obsolete_embedded_settings_are_ignored(tmp_path: Path) -> None:
+    config = OwlConfig.from_dict(
+        {"aggregator": {"mode": "embedded", "config_file": "aggregator.json"}, "splits": {"enabled": True}}, base_dir=tmp_path)
+    assert config.aggregator.url == "http://127.0.0.1:5100"
 
 
 @pytest.mark.parametrize(
     "raw",
-    [{"aggregator": {"mode": "magic"}}, {"aggregator": {"mode": "embedded"}}, {"aggregator": {"mode": "remote", "url": "ftp://x"}},
-     {"server": {"port": 99999}}, {"server": {"cors_origins": ["*"]}}],
+    [{"aggregator": {"url": "ftp://x"}}, {"aggregator": {"url": "aggregator:5100"}},
+     {"aggregator": {"timeout_seconds": "slow"}}, {"server": {"port": 99999}}, {"server": {"cors_origins": ["*"]}}],
 )
 def test_invalid_config(raw: dict, tmp_path: Path) -> None:
-    raw.setdefault("aggregator", {"mode": "remote"})
     with pytest.raises(ConfigurationError):
         OwlConfig.from_dict(raw, base_dir=tmp_path)

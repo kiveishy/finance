@@ -1,1 +1,2 @@
--r ../../data-providers/finance-aggregator/requirements.txt
+# Owl uses only the Python standard library at runtime. It reads its data from the finance aggregator
+# service over HTTP and imports only the aggregator's data contracts (finance_aggregator.core) from source.

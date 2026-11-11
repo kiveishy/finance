@@ -8,20 +8,16 @@ from pathlib import Path
 
 app_dir = Path(SPECPATH).resolve()  # noqa: F821 - provided by PyInstaller
 dist_dir = Path(DISTPATH).resolve()  # noqa: F821 - provided by PyInstaller
+# Only the aggregator's data contracts (finance_aggregator.core, stdlib-only) are bundled; owl gets data over HTTP.
 aggregator_dir = Path(os.environ.get("OWL_AGGREGATOR_DIR", app_dir.parent.parent / "data-providers" / "finance-aggregator")).resolve()
-aggregator_config_path = aggregator_dir / "config.json"
-yahoo_db_client = Path(os.environ.get("YAHOO_DB_DIR", aggregator_dir.parent / "yahoo-db")).resolve() / "yahoodb-api.py"
-for required in (aggregator_dir / "finance_aggregator", yahoo_db_client):
-    if not required.exists():
-        raise SystemExit(f"required source not found: {required}")
+if not (aggregator_dir / "finance_aggregator").exists():
+    raise SystemExit(f"required source not found: {aggregator_dir / 'finance_aggregator'}")
 
 a = Analysis(  # noqa: F821
     [str(app_dir / "main.py")],
     pathex=[str(app_dir), str(aggregator_dir)],
-    datas=[(str(app_dir / "web"), "web"), (str(yahoo_db_client), "yahoo_db")],
-    # requests is only imported by the yahoo-db client, which is loaded by path at runtime
-    hiddenimports=["requests"],
-    excludes=["tkinter", "matplotlib", "IPython", "pytest", "_pytest"],
+    datas=[(str(app_dir / "web"), "web")],
+    excludes=["tkinter", "matplotlib", "IPython", "pytest", "_pytest", "yfinance", "pandas", "numpy", "requests"],
 )
 pyz = PYZ(a.pure)  # noqa: F821
 exe = EXE(  # noqa: F821
@@ -50,26 +46,27 @@ def _rebase(value, source_dir: Path) -> str:
         return str(target)
 
 
-def _write_once(path: Path, content: dict) -> None:
-    if path.exists():
-        print(f"[spec] keeping existing {path}")
-        return
-    path.write_text(json.dumps(content, indent=4) + "\n", encoding="utf-8")
-    print(f"[spec] wrote {path}")
-
-
-# Standalone layout: owl(.exe) + config.json + aggregator.json (provider chain for embedded mode).
-aggregator_config = json.loads(aggregator_config_path.read_text(encoding="utf-8"))
-for provider in aggregator_config.get("providers", []):
-    options = provider.get("options") or {}
-    for key in ("db_path", "client_source_dir"):
-        if key in options:
-            options[key] = _rebase(options[key], aggregator_dir)
-aggregator_config.pop("logging", None)  # owl owns logging
-_write_once(dist_dir / "aggregator.json", aggregator_config)
-
-owl_config = json.loads((app_dir / "config.json").read_text(encoding="utf-8"))
-owl_config["aggregator"]["config_file"] = "aggregator.json"
-browser = owl_config.setdefault("browser", {})
-browser["chrome_dir"] = _rebase(browser.get("chrome_dir") or "../../common/chrome", app_dir)
-_write_once(dist_dir / "config.json", owl_config)
+# Standalone layout: owl(.exe) + config.json. An existing config.json is kept (it holds your settings),
+# only the settings of the removed embedded aggregator and split correction are dropped from it.
+config_path = dist_dir / "config.json"
+if config_path.exists():
+    owl_config = json.loads(config_path.read_text(encoding="utf-8"))
+    obsolete = [key for key in ("mode", "config_file") if key in owl_config.get("aggregator", {})]
+    if obsolete or "splits" in owl_config:
+        for key in obsolete:
+            owl_config["aggregator"].pop(key)
+        owl_config.pop("splits", None)
+        config_path.write_text(json.dumps(owl_config, indent=4) + "\n", encoding="utf-8")
+        print(f"[spec] removed obsolete settings from {config_path}")
+    else:
+        print(f"[spec] keeping existing {config_path}")
+    old_chain = dist_dir / "aggregator.json"
+    if old_chain.exists():
+        old_chain.unlink()
+        print(f"[spec] removed {old_chain} (owl no longer runs the aggregator itself)")
+else:
+    owl_config = json.loads((app_dir / "config.json").read_text(encoding="utf-8"))
+    browser = owl_config.setdefault("browser", {})
+    browser["chrome_dir"] = _rebase(browser.get("chrome_dir") or "../../common/chrome", app_dir)
+    config_path.write_text(json.dumps(owl_config, indent=4) + "\n", encoding="utf-8")
+    print(f"[spec] wrote {config_path}")

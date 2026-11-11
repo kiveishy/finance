@@ -1,7 +1,5 @@
 {
     "aggregator": {
-        "mode": "embedded",
-        "config_file": "../../data-providers/finance-aggregator/config.json",
         "url": "http://127.0.0.1:5100",
         "api_key": null,
         "timeout_seconds": 30
@@ -23,10 +21,6 @@
     },
     "storage": {
         "database": "./data/owl.db"
-    },
-    "splits": {
-        "enabled": true,
-        "recheck_hours": 24
     },
     "web": {
         "root": null

@@ -1,7 +1,7 @@
-"""Owl's link to its data provider: the finance aggregator, embedded in-process or over HTTP.
+"""Owl's link to its data provider: the finance aggregator service, over its HTTP API.
 
-Both variants implement the aggregator's consumer contract (`StockDataSource` + `FinanceService`),
-so the rest of owl does not know which one it is talking to.
+Owl never talks to a data source (yahoo-db, Yahoo Finance) itself; the aggregator decides where data comes from.
+The client implements the aggregator's consumer contract (`StockDataSource` + `FinanceService`).
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ import urllib.request
 from typing import Any, Mapping, Protocol
 from urllib.parse import quote, urlencode
 
-from finance_aggregator.config import AppConfig
 from finance_aggregator.core import (
     DataNotFoundError,
     DateRange,
@@ -127,7 +126,7 @@ def _state(value: Any) -> HealthState:
 def _network_reason(exc: BaseException) -> str:
     reason = getattr(exc, "reason", exc)
     if isinstance(reason, ConnectionRefusedError):
-        return "connection refused - is the aggregator running?"
+        return "connection refused - is the aggregator running? (its run.cmd / run.sh serves the API)"
     if isinstance(reason, (TimeoutError, socket.timeout)):
         return "timed out"
     if isinstance(reason, socket.gaierror):
@@ -155,11 +154,5 @@ def _translate_http(status: int, message: str, base_url: str) -> Exception:
 
 
 def create_market_data(link: AggregatorLink) -> MarketData:
-    if link.mode == "remote":
-        logger.info("Using remote aggregator %s", link.url)
-        return RemoteAggregatorSource(link.url, api_key=link.api_key, timeout_seconds=link.timeout_seconds)
-    from finance_aggregator.app import create_aggregator
-
-    assert link.config_file is not None  # guaranteed by config validation
-    logger.info("Using embedded aggregator configured by %s", link.config_file)
-    return create_aggregator(AppConfig.load(link.config_file))
+    logger.info("Using the finance aggregator service at %s", link.url)
+    return RemoteAggregatorSource(link.url, api_key=link.api_key, timeout_seconds=link.timeout_seconds)

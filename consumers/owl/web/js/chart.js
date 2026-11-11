@@ -90,6 +90,9 @@ export class ChartView {
 
     resetZoom() {
         if (!this.payload || !this.payload.bars.length) return;
+        // Dragging/scrolling a price axis turns auto scale off; a new chart (e.g. 700 -> 20) must fit again.
+        this.candles.priceScale().applyOptions({ autoScale: true });
+        this.volume.priceScale().applyOptions({ autoScale: true });
         const last = this.payload.bars.length - 1;
         const fromIndex = this.payload.bars.findIndex((bar) => bar.time >= this.payload.visible_from);
         const from = Math.min(fromIndex < 0 ? 0 : fromIndex, last - MIN_VISIBLE_BARS + 1);

@@ -19,7 +19,7 @@ from finance_aggregator.services import AggregatorService, FallbackPolicy
 RANGE = DateRange(date(2026, 1, 1), date(2026, 1, 10))
 
 
-def chain(*providers: FakeProvider, staleness: int | None = 5) -> AggregatorService:
+def chain(*providers: FakeProvider, staleness: int | None = 0) -> AggregatorService:
     return AggregatorService(providers, policy=FallbackPolicy(staleness))
 
 
@@ -165,10 +165,33 @@ class TestHistoryMerge:
 
     def test_gap_within_tolerance_is_complete(self) -> None:
         def short(symbol: str, date_range: DateRange) -> PriceHistory:
-            return PriceHistory(symbol, date_range, make_bars(date_range.start, 7))  # ends 3 days early
+            return PriceHistory(symbol, date_range, make_bars(date_range.start, 7))  # misses Thu+Fri
 
         api, yahoo = FakeProvider("api", history=short), FakeProvider("yahoo")
-        assert chain(api, yahoo).get_price_history("AAPL", RANGE).source == "api"
+        assert chain(api, yahoo, staleness=2).get_price_history("AAPL", RANGE).source == "api"
+
+    def test_one_missing_trading_day_is_filled(self) -> None:
+        # yahoo-db synced up to Tuesday, the request ends Wednesday: Wednesday comes from Yahoo Finance.
+        week = DateRange(date(2026, 11, 2), date(2026, 11, 11))
+
+        def until_tuesday(symbol: str, date_range: DateRange) -> PriceHistory:
+            return PriceHistory(symbol, date_range, make_bars(date_range.start, 9))
+
+        api, yahoo = FakeProvider("api", history=until_tuesday), FakeProvider("yahoo")
+        history = chain(api, yahoo).get_price_history("NVDA", week)
+        assert yahoo.history_requests == [DateRange(date(2026, 11, 11), date(2026, 11, 11))]
+        assert history.bars[-1].date == date(2026, 11, 11) and history.bars[-1].source == "yahoo"
+
+    def test_weekend_gap_is_not_filled(self) -> None:
+        # Data up to Friday is complete for a request ending on Sunday.
+        weekend = DateRange(date(2026, 11, 2), date(2026, 11, 8))
+
+        def until_friday(symbol: str, date_range: DateRange) -> PriceHistory:
+            return PriceHistory(symbol, date_range, make_bars(date_range.start, 5))
+
+        api, yahoo = FakeProvider("api", history=until_friday), FakeProvider("yahoo")
+        assert chain(api, yahoo).get_price_history("NVDA", weekend).source == "api"
+        assert yahoo.calls == []
 
 
 class TestStatusAndLifecycle:

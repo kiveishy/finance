@@ -4,10 +4,10 @@ Fallback rules (per request):
   1. Providers are tried in priority order.
   2. A provider whose cheap `is_available()` check fails is skipped (UNAVAILABLE).
   3. DataNotFoundError, ProviderUnavailableError and ProviderError all move on to the next provider.
-  4. Price history is MERGED: bars from a higher-priority provider are kept; if they end more than
-     `history_max_staleness_days` before the requested end (e.g. yahoo-db not synced for a while),
-     only the missing tail is requested from the next providers. Every bar keeps the name of the
-     provider that supplied it (`PriceBar.source`).
+  4. Price history is MERGED: bars from a higher-priority provider are kept; if more than
+     `history_max_staleness_days` trading days (Mon-Fri) are missing before the requested end
+     (e.g. yahoo-db has not synced the latest day yet), only the missing tail is requested from
+     the next providers. Every bar keeps the name of the provider that supplied it (`PriceBar.source`).
   5. When nobody returns data:
        - at least one provider answered "not found"  -> DataNotFoundError
        - otherwise (nobody could answer)               -> ProviderUnavailableError
@@ -51,13 +51,19 @@ T = TypeVar("T")
 
 @dataclass(frozen=True, slots=True)
 class FallbackPolicy:
-    #: None disables tail filling (the first provider with data wins).
-    history_max_staleness_days: int | None = 5
+    #: Missing trading days (Mon-Fri) tolerated at the end of a history; None disables tail filling
+    #: (the first provider with data wins).
+    history_max_staleness_days: int | None = 0
 
     def is_fresh(self, last_date: date, requested_end: date) -> bool:
         if self.history_max_staleness_days is None:
             return True
-        return (requested_end - last_date).days <= self.history_max_staleness_days
+        return missing_trading_days(last_date, requested_end) <= self.history_max_staleness_days
+
+
+def missing_trading_days(last_date: date, end: date) -> int:
+    """Weekdays after `last_date` up to and including `end` (exchange holidays are not known)."""
+    return sum(1 for offset in range(1, (end - last_date).days + 1) if (last_date + timedelta(offset)).weekday() < 5)
 
 
 class AggregatorService(FinanceService, StockDataSource):

@@ -61,11 +61,12 @@ class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 5100
     api_key: str | None = None
+    auto_start: bool = True  # also serve the HTTP API while the interactive CLI runs
 
 
 @dataclass(frozen=True)
 class AggregatorConfig:
-    history_max_staleness_days: int | None = 5
+    history_max_staleness_days: int | None = 0
 
 
 @dataclass(frozen=True)
@@ -154,7 +155,7 @@ def _parse_providers(raw: Any) -> tuple[ProviderSpec, ...]:
 
 def _parse_aggregator(section: Mapping[str, Any]) -> AggregatorConfig:
     return AggregatorConfig(
-        history_max_staleness_days=_int(section, "history_max_staleness_days", 5),
+        history_max_staleness_days=_int(section, "history_max_staleness_days", 0),
     )
 
 
@@ -163,7 +164,10 @@ def _parse_server(section: Mapping[str, Any]) -> ServerConfig:
     if port is None or port > 65535:
         raise ConfigurationError(f"'server.port' must be between 0 and 65535, got {port!r}")
     api_key = section.get("api_key") or os.environ.get("FINANCE_AGGREGATOR_API_KEY") or None
-    return ServerConfig(host=str(section.get("host", "127.0.0.1")), port=port, api_key=api_key)
+    auto_start = section.get("auto_start", True)
+    if not isinstance(auto_start, bool):
+        raise ConfigurationError(f"'server.auto_start' must be true or false, got {auto_start!r}")
+    return ServerConfig(host=str(section.get("host", "127.0.0.1")), port=port, api_key=api_key, auto_start=auto_start)
 
 
 def _parse_logging(section: Mapping[str, Any], base_dir: Path) -> LoggingConfig:

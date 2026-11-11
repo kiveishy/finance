@@ -229,9 +229,8 @@ class TestStaticFiles:
 def running(tmp_path: Path, market: FakeMarket) -> Iterator[tuple[str, OwlApplication]]:
     def start(**server: Any) -> tuple[str, OwlApplication]:
         config = OwlConfig.from_dict(
-            {"aggregator": {"mode": "remote"}, "server": {"port": 0, **server},
-             "storage": {"database": str(tmp_path / "owl.db")}, "web": {"root": str(WEB_ROOT)},
-             "splits": {"enabled": False}},  # no Yahoo Finance calls from unit tests
+            {"server": {"port": 0, **server},
+             "storage": {"database": str(tmp_path / "owl.db")}, "web": {"root": str(WEB_ROOT)}},
             base_dir=tmp_path,
         )
         app = OwlApplication(config, market=market)
@@ -295,7 +294,7 @@ class TestHttpServer:
 
 def test_refuses_insecure_remote_binding(tmp_path: Path, market: FakeMarket) -> None:
     config = OwlConfig.from_dict(
-        {"aggregator": {"mode": "remote"}, "server": {"host": "0.0.0.0"}, "storage": {"database": str(tmp_path / "o.db")}},
+        {"server": {"host": "0.0.0.0"}, "storage": {"database": str(tmp_path / "o.db")}},
         base_dir=tmp_path,
     )
     app = OwlApplication(config, market=market)

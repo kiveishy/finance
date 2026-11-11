@@ -14,7 +14,6 @@ from finance_aggregator.core import (
     DateRange,
     FinanceError,
     InvalidRequestError,
-    PriceHistory,
     normalize_symbol,
 )
 
@@ -35,14 +34,12 @@ class QuoteService:
         self,
         market: MarketData,
         *,
-        corrector: Callable[[PriceHistory], PriceHistory] | None = None,
         ttl_seconds: float = 60.0,
         max_workers: int = 6,
         today: Callable[[], date] = date.today,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._market = market
-        self._corrector = corrector
         self._ttl = ttl_seconds
         self._max_workers = max_workers
         self._today = today
@@ -72,8 +69,6 @@ class QuoteService:
         today = self._today()
         try:
             history = self._market.get_price_history(symbol, DateRange(today - timedelta(days=LOOKBACK_DAYS), today))
-            if self._corrector is not None:
-                history = self._corrector(history)
         except DataNotFoundError:
             return symbol, None, True
         except (FinanceError, OSError) as exc:  # provider down: report "no price" now, retry next time

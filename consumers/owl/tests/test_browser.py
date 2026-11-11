@@ -126,7 +126,7 @@ def test_find_local_chrome(tmp_path: Path) -> None:
 
 
 def test_browser_config_parsing(tmp_path: Path) -> None:
-    base = {"aggregator": {"mode": "remote"}}
+    base: dict = {}
     default = OwlConfig.from_dict(base, base_dir=tmp_path / "a" / "b")
     assert default.browser.chrome == "local"
     assert default.browser.chrome_dir == (tmp_path / "common" / "chrome").resolve()

@@ -127,9 +127,10 @@ For every request, `AggregatorService` does the following:
    - success → returns the result immediately; later providers are not called
    - `DataNotFoundError`, `ProviderUnavailableError`, `ProviderError`, or any unexpected
      exception → records the attempt and moves on to the next provider
-5. **Price history merging (gap filling).** Suppose a provider's history ends more than
-   `aggregator.history_max_staleness_days` days before the requested end date, for example
-   because yahoo-db has not synced for two weeks. Its bars are **kept**, and only the missing
+5. **Price history merging (gap filling).** Suppose a provider's history is missing more than
+   `aggregator.history_max_staleness_days` trading days (Mon-Fri) before the requested end date,
+   for example because yahoo-db has not synced the latest day yet. With the default `0`, a single
+   missing trading day is enough. Its bars are **kept**, and only the missing
    tail (the day after its last bar through the requested end) is requested from the next
    provider. Bars from a higher-priority provider are never overwritten. This repeats down the
    chain until the history is fresh or the chain ends; whatever was collected is then returned.
@@ -201,8 +202,8 @@ resolved against the directory of the config file.
      "options": {"timeout_seconds": 15, "cache_dir": "./cache/yfinance",
                  "probe_symbol": "SPY", "proxy": null}}
   ],
-  "aggregator": {"history_max_staleness_days": 5}, // null disables gap filling from lower-priority providers
-  "server":     {"host": "127.0.0.1", "port": 5100, "api_key": null},
+  "aggregator": {"history_max_staleness_days": 0}, // missing trading days tolerated; null disables gap filling
+  "server":     {"host": "127.0.0.1", "port": 5100, "api_key": null, "auto_start": true},
   "logging":    {"level": "INFO", "file": "./logs/finance-aggregator.log",
                  "max_bytes": 5242880, "backup_count": 5},
   "plugins":    []                                 // extra modules that register providers
@@ -220,6 +221,7 @@ resolved against the directory of the config file.
 | `yahoo_finance.cache_dir` | yfinance cache location (kept inside the install folder so the daemon can write to it) |
 | `yahoo_finance.proxy` | Optional HTTP(S) proxy URL for Yahoo |
 | `server.api_key` | When set, every endpoint except `/api/health` requires the header `X-API-Key`. The key can also be supplied through the env var `FINANCE_AGGREGATOR_API_KEY` |
+| `server.auto_start` | `true` (default): the interactive CLI also serves the HTTP API in the background. `false`: only on `server start` |
 
 If a provider cannot be constructed (unknown type, missing yahoo-db sources, bad option), it is
 replaced by a `MisconfiguredProvider` placeholder. The rest of the chain keeps working, and
@@ -231,7 +233,8 @@ replaced by a `MisconfiguredProvider` placeholder. The rest of the chain keeps w
 finance-aggregator [--config PATH] [--log-level LEVEL] [--version] [command ...]
 ```
 
-With no command, an interactive shell starts (`finance> `). With a command, that single command
+With no command, an interactive shell starts (`finance> `) and the HTTP API is served in the
+background (see [HTTP API](#http-api-serve)). With a command, that single command
 runs and the exit code reflects the result (see [Error contract](#error-contract)).
 
 | Command | Description |
@@ -240,6 +243,7 @@ runs and the exit code reflects the result (see [Error contract](#error-contract
 | `read SYMBOL [--info \| --history] [--days N \| --months N \| --years N \| --start DATE [--end DATE]] [--limit N] [--json]` | Ticker information and price history. Default: both, last 30 days. `--limit` caps the printed rows (default 25, 0 = all) |
 | `search QUERY... [--limit N] [--json]` / `find` | Finds symbols by ticker or company name (`search apple`, `search berkshire hath`). Default 10 results, max 50 |
 | `serve [--host H] [--port P]` | Runs the HTTP API in the foreground (Ctrl+C or SIGTERM stops it) |
+| `server [status \| start \| stop]` / `api` | Interactive shell only: shows, starts or stops the HTTP API that runs next to the shell |
 | `help [command]` / `?` | Command list or detailed help for one command (`<command> --help` also works) |
 | `exit` / `quit` / `q` | Leaves the shell (Ctrl+D / Ctrl+Z also exits) |
 
@@ -257,6 +261,12 @@ Logs go to `logs/finance-aggregator.log`. The console shows only warnings and ab
 pass `--log-level`.
 
 ## HTTP API (`serve`)
+
+`run.cmd` / `./run.sh` (no arguments) opens the interactive CLI **and** serves this API in the
+background at the same time (`server.auto_start`, default `true`), so consumers such as Owl can connect
+while you use the CLI. The banner shows the URL; the shell command `server` shows the API state and
+`server start` / `server stop` switch it. If the port is taken (e.g. by another aggregator), the CLI
+still starts and says so. `run.cmd serve` runs only the API in the foreground (for the Linux daemon).
 
 This is a read-only JSON API with the same response shape as yahoo-db. Responses also include a
 `source` field. History responses add a `sources` bar count per provider, and each bar carries
@@ -473,7 +483,7 @@ lists it automatically, and parse errors never terminate the shell.
 |---------|---------------|
 | `yahoo-db-local UNAVAILABLE database file not accessible` | Expected when the DB is not on this machine; the chain falls through to the API. Otherwise set `db_path` |
 | `yahoo-db-api ... misconfigured: yahoo-db source 'yahoodb-api.py' not found` | Set `client_source_dir` to the yahoo-db folder (executables use their bundled copy) |
-| Recent bars are tagged `yahoo-finance` although the API has the ticker | Expected: yahoo-db's data ends more than `history_max_staleness_days` before the requested end (check `status` → last sync), so the missing tail was filled from Yahoo Finance |
+| Recent bars are tagged `yahoo-finance` although the API has the ticker | Expected: yahoo-db's data is missing more than `history_max_staleness_days` trading days before the requested end (check `status` → last sync), so the missing tail was filled from Yahoo Finance |
 | Linux: `ensurepip is not available` | Install `python3-venv` (`sudo apt install python3-venv`), or let `run.sh` bootstrap pip through `get-pip.py` |
 | WSL: `[Errno 5] Input/output error` during pip install under `/mnt/c/...` | The venv is on a Windows/shared drvfs mount. Use a Linux-native location: `FINANCE_VENV=$HOME/.venvs/finance-aggregator ./build.sh` |
 | `Address already in use` on `serve` | Another instance or orphaned process holds the port; change `server.port` or stop it |

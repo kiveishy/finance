@@ -33,12 +33,13 @@
         }
     ],
     "aggregator": {
-        "history_max_staleness_days": 5
+        "history_max_staleness_days": 0
     },
     "server": {
         "host": "127.0.0.1",
         "port": 5100,
-        "api_key": null
+        "api_key": null,
+        "auto_start": true
     },
     "logging": {
         "level": "INFO",

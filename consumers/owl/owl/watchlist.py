@@ -121,6 +121,9 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+-- Split correction moved to yahoo-db; remove the tables older owl versions created.
+DROP TABLE IF EXISTS split_corrections;
+DROP TABLE IF EXISTS split_checks;
 """
 
 

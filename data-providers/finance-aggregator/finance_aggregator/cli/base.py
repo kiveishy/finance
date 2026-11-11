@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, ClassVar, Iterable, Iterator, NoReturn, TextIO
 if TYPE_CHECKING:
     from ..config import AppConfig
     from ..core.interfaces import FinanceService, StockDataSource
+    from ..server import BackgroundApi
 
 
 class CommandOutcome(Enum):
@@ -56,6 +57,7 @@ class CommandContext:
     config: "AppConfig"
     registry: "CommandRegistry"
     out: TextIO
+    api: "BackgroundApi | None" = None  # the HTTP API served next to the interactive shell
 
 
 class Command(ABC):

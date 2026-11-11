@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import re
+import sys
 import threading
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -154,7 +155,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
 
 class _ApiHttpServer(ThreadingHTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    # On Windows SO_REUSEADDR lets a second instance bind the same port silently (requests then hit either).
+    allow_reuse_address = sys.platform != "win32"
 
     def __init__(self, address: tuple[str, int], application: ApiApplication) -> None:
         super().__init__(address, _RequestHandler)
@@ -204,3 +206,37 @@ class ApiServer:
 
     def __exit__(self, *exc_info: object) -> None:
         self.stop()
+
+
+class BackgroundApi:
+    """The HTTP API running next to the interactive CLI; started and stopped on demand."""
+
+    def __init__(self, source: StockDataSource, service: FinanceService, *, host: str, port: int,
+                 api_key: str | None = None) -> None:
+        self._source = source
+        self._service = service
+        self._host = host
+        self._port = port
+        self._api_key = api_key
+        self._server: ApiServer | None = None
+
+    @property
+    def running(self) -> bool:
+        return self._server is not None
+
+    @property
+    def url(self) -> str:
+        return self._server.url if self._server else f"http://{self._host}:{self._port}"
+
+    def start(self) -> str:
+        """Start serving; returns the URL. Raises OSError when the port can't be used (e.g. already taken)."""
+        if self._server is None:
+            server = ApiServer(self._source, self._service, host=self._host, port=self._port, api_key=self._api_key)
+            server.start()
+            self._server = server
+        return self._server.url
+
+    def stop(self) -> None:
+        server, self._server = self._server, None
+        if server is not None:
+            server.stop()

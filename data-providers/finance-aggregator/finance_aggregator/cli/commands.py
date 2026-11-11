@@ -144,15 +144,17 @@ class ServeCommand(Command):
     def execute(self, args: argparse.Namespace, ctx: CommandContext) -> CommandOutcome:
         from ..server import ApiServer
 
+        if ctx.api is not None and ctx.api.running:
+            ctx.out.write(f"The HTTP API already runs at {ctx.api.url} (see 'server').\n")
+            return CommandOutcome.CONTINUE
         stop = threading.Event()
+        host = args.host or ctx.config.server.host
+        port = args.port if args.port is not None else ctx.config.server.port
+        try:
+            server = ApiServer(ctx.source, ctx.service, host=host, port=port, api_key=ctx.config.server.api_key)
+        except OSError as exc:
+            raise CommandError(f"cannot listen on {host}:{port} ({exc}) - is another aggregator already running?") from exc
         restore = self._install_sigterm(stop)
-        server = ApiServer(
-            ctx.source,
-            ctx.service,
-            host=args.host or ctx.config.server.host,
-            port=args.port if args.port is not None else ctx.config.server.port,
-            api_key=ctx.config.server.api_key,
-        )
         try:
             with server:
                 ctx.out.write(f"Serving finance API on {server.url} (Ctrl+C to stop)\n")
@@ -179,5 +181,33 @@ class ServeCommand(Command):
         return restore
 
 
+class ServerCommand(Command):
+    name = "server"
+    aliases = ("api",)
+    summary = "Show, start or stop the HTTP API that runs next to this shell (Owl connects to it)"
+
+    def configure_parser(self, parser: CommandArgumentParser) -> None:
+        parser.add_argument("action", nargs="?", choices=("status", "start", "stop"), default="status")
+
+    def execute(self, args: argparse.Namespace, ctx: CommandContext) -> CommandOutcome:
+        api = ctx.api
+        if api is None:
+            raise CommandError("no background HTTP API here; use 'serve' to run it in the foreground")
+        if args.action == "start":
+            try:
+                ctx.out.write(f"HTTP API running at {api.start()}\n")
+            except OSError as exc:
+                raise CommandError(f"cannot start the HTTP API on {api.url}: {exc}") from exc
+        elif args.action == "stop":
+            if api.running:
+                api.stop()
+                ctx.out.write("HTTP API stopped\n")
+            else:
+                ctx.out.write("HTTP API is not running\n")
+        else:
+            ctx.out.write(f"HTTP API {'running at' if api.running else 'stopped, would listen on'} {api.url}\n")
+        return CommandOutcome.CONTINUE
+
+
 def builtin_commands() -> list[Command]:
-    return [HelpCommand(), StatusCommand(), SearchCommand(), ReadCommand(), ServeCommand(), ExitCommand()]
+    return [HelpCommand(), StatusCommand(), SearchCommand(), ReadCommand(), ServeCommand(), ServerCommand(), ExitCommand()]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
@@ -12,6 +13,8 @@ from typing import Any, Mapping
 
 from finance_aggregator.config import LoggingConfig
 from finance_aggregator.core.errors import ConfigurationError
+
+logger = logging.getLogger(__name__)
 
 CONFIG_ENV_VAR = "OWL_CONFIG"
 API_KEY_ENV_VAR = "OWL_API_KEY"
@@ -56,21 +59,11 @@ class BrowserConfig:
 
 @dataclass(frozen=True)
 class AggregatorLink:
-    """How owl reaches its data provider (the finance aggregator)."""
+    """Where owl reaches its only data provider: the finance aggregator service (`finance-aggregator serve`)."""
 
-    mode: str = "embedded"  # "embedded" (in-process provider chain) or "remote" (aggregator HTTP API)
-    config_file: Path | None = None
     url: str = "http://127.0.0.1:5100"
     api_key: str | None = None
     timeout_seconds: float = 30.0
-
-
-@dataclass(frozen=True)
-class SplitConfig:
-    """Correct chart history stored before a stock split, using Yahoo Finance as the reference."""
-
-    enabled: bool = True
-    recheck_hours: float = 24.0
 
 
 @dataclass(frozen=True)
@@ -99,7 +92,6 @@ class OwlConfig:
     aggregator: AggregatorLink
     server: ServerConfig = ServerConfig()
     browser: BrowserConfig = BrowserConfig()
-    splits: SplitConfig = SplitConfig()
     database: Path = Path("data/owl.db")
     web_root: Path | None = None
     logging: LoggingConfig = LoggingConfig()
@@ -130,10 +122,9 @@ class OwlConfig:
         return cls(
             path=path,
             base_dir=base,
-            aggregator=_parse_aggregator(_section(raw, "aggregator"), resolve),
+            aggregator=_parse_aggregator(_section(raw, "aggregator")),
             server=_parse_server(_section(raw, "server")),
             browser=_parse_browser(_section(raw, "browser"), resolve),
-            splits=_parse_splits(_section(raw, "splits")),
             database=resolve(storage.get("database", "data/owl.db")),
             web_root=resolve(web["root"]) if web.get("root") else None,
             logging=LoggingConfig.from_mapping(_section(raw, "logging"), base),
@@ -147,34 +138,23 @@ def _section(raw: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return value
 
 
-def _parse_aggregator(section: Mapping[str, Any], resolve: Any) -> AggregatorLink:
-    mode = str(section.get("mode", "embedded"))
-    if mode not in ("embedded", "remote"):
-        raise ConfigurationError(f"aggregator.mode must be 'embedded' or 'remote', got {mode!r}")
-    config_file = section.get("config_file")
-    if mode == "embedded" and not config_file:
-        raise ConfigurationError("aggregator.config_file is required in embedded mode")
+def _parse_aggregator(section: Mapping[str, Any]) -> AggregatorLink:
+    obsolete = sorted(k for k in ("mode", "config_file") if k in section)
+    if obsolete:
+        logger.warning("Ignoring obsolete aggregator.%s: owl always uses the aggregator service at aggregator.url",
+                       "/".join(obsolete))
     url = str(section.get("url", "http://127.0.0.1:5100")).rstrip("/")
-    if mode == "remote" and not url.startswith(("http://", "https://")):
+    if not url.startswith(("http://", "https://")):
         raise ConfigurationError(f"aggregator.url must be an http(s) URL, got {url!r}")
     try:
         timeout = float(section.get("timeout_seconds", 30.0))
     except (TypeError, ValueError) as exc:
         raise ConfigurationError("aggregator.timeout_seconds must be a number") from exc
     return AggregatorLink(
-        mode=mode,
-        config_file=resolve(config_file) if config_file else None,
         url=url,
         api_key=section.get("api_key") or None,
         timeout_seconds=timeout,
     )
-
-
-def _parse_splits(section: Mapping[str, Any]) -> SplitConfig:
-    hours = section.get("recheck_hours", 24)
-    if isinstance(hours, bool) or not isinstance(hours, (int, float)) or hours < 0:
-        raise ConfigurationError(f"splits.recheck_hours must be a number >= 0, got {hours!r}")
-    return SplitConfig(enabled=bool(section.get("enabled", True)), recheck_hours=float(hours))
 
 
 def _parse_browser(section: Mapping[str, Any], resolve: Any) -> BrowserConfig:

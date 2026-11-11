@@ -9,7 +9,7 @@ from datetime import date, timedelta
 from enum import Enum
 from typing import Any, Callable, ClassVar, Sequence
 
-from finance_aggregator.core import DataNotFoundError, DateRange, PriceBar, PriceHistory, normalize_symbol
+from finance_aggregator.core import DataNotFoundError, DateRange, PriceBar, normalize_symbol
 
 from .errors import ValidationError
 from .market_data import MarketData
@@ -239,11 +239,9 @@ class ChartService:
         market: MarketData,
         *,
         today: Callable[[], date] = date.today,
-        corrector: Callable[[PriceHistory], PriceHistory] | None = None,
     ) -> None:
         self._market = market
         self._today = today
-        self._corrector = corrector
 
     def build(self, request: ChartRequest) -> dict[str, Any]:
         today = self._today()
@@ -255,8 +253,6 @@ class ChartService:
         fetch_start = max(fetch_start, ALL_START)
 
         history = self._market.get_price_history(request.symbol, DateRange(fetch_start, today))
-        if self._corrector is not None:
-            history = self._corrector(history)
         # Candles need full OHLC; providers occasionally return partial rows (e.g. halted days).
         daily = [b for b in history.bars if None not in (b.open, b.high, b.low, b.close)]
         if not daily:

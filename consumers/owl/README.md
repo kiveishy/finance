@@ -1,6 +1,9 @@
 # Owl - stock viewer
 
 Owl is a web-based stock viewer that consumes the [finance aggregator](../../data-providers/finance-aggregator/README.md).
+All stock data comes from the **aggregator service** over HTTP (`aggregator.url`), on this PC or on another
+computer. Owl never contacts a data source (yahoo-db, Yahoo Finance) itself; the aggregator decides where
+data comes from and falls back between its providers.
 It looks like VS Code (Dark+ workbench) and draws its charts in the TradingView style, using
 TradingView Lightweight Charts. Because it is a web app, it runs in any browser, as a standalone
 executable on Windows and Linux, and as an Android APK (a Capacitor wrapper around the same UI).
@@ -17,7 +20,6 @@ executable on Windows and Linux, and as an Android APK (a Capacitor wrapper arou
 | **Indicators** | MA 20 / MA 50 / MA 200 presets, plus custom SMA/EMA with any period (1-1000, up to 10). Settings are saved on the server, so desktop and phone share them. MAs are computed with enough extra history (warm-up) that they are valid from the first visible bar |
 | **Trend lines** | **Line** in the chart toolbar, then click the start and the end point (Esc cancels). Click a line to select it (handles appear at both ends). Drag the line to **move** it, or drag an end to **stretch / turn** it; the chart doesn't pan while you do. **Delete** (or the trash button) removes the selected line, and the clear button removes all lines of the symbol. Ends are anchored to a date and a price, so lines stay in place when you zoom, scroll, or switch D / W / M. They can also extend past the last bar. Lines are saved per symbol on the server (`/api/settings/drawings`, at most 100 per symbol) and shared across devices |
 | **Chart** | Candles and indicator lines, with **volume as bars in a resizable pane at the bottom**. Mouse-wheel / pinch zoom and drag to scroll, plus zoom in, zoom out and reset buttons. A crosshair legend shows OHLC, change, volume, MA values and the **data provider of the bar** |
-| **Split correction** | Stored history (yahoo-db) keeps the price scale it had when downloaded, so a later split made the chart jump (e.g. ETHA, 1:3 in Oct 2026: older bars at ⅓ of the price). Owl compares the bars with Yahoo Finance's split-adjusted closes and rescales runs that jump by a split ratio and stay on the old scale (volume too). Dividends shift that ratio only gradually, and single bad ticks are ignored. Corrections are saved in `owl.db` (`split_corrections`) and re-checked once a day, or when older history is requested. Each saved correction remembers the raw closes of its first and last bar. If the source later serves different values (e.g. yahoo-db re-downloaded the history), the correction is dropped and re-checked at once, so already-correct data is never corrected twice. Yahoo's own bars are never changed |
 | **Market status** | The title bar shows whether the US stock market (NYSE / Nasdaq) is **open** (green), in **pre-market** (04:00-09:30 ET) or **after hours** (16:00-20:00 ET) (amber), or **closed** (red, with the holiday name), plus a countdown to the next open or close. The tooltip gives the time in New York and in your own time zone. It is computed in the browser in New York time (`web/js/market.js`), including NYSE holidays (with weekend shifts) and the 13:00 early closes, so it needs no server or network. It can be turned off in Settings |
 | **VS Code look** | Activity bar, Explorer tree, editor tabs (one per symbol, middle-click closes), breadcrumbs, a command-palette style quick input (**Ctrl+P** opens Go to symbol), notifications, and a status bar showing aggregator health and price bars per provider |
 | **Settings** | **Ctrl+,** or the gear icon opens a VS Code-style **Settings** tab. It has a search box and sections, shows a reset button next to each changed setting, and validates input (e.g. a value outside the allowed range is rejected with a message). Settings: **Explorer position** (left / **right**, the default; on phones the drawer slides in from that side), Explorer width (also set by dragging its edge), show prices, show day change, price refresh interval (15-3600 s), reset indicators, owl server connection and data provider status. They apply at once and are saved on the server (`/api/settings/ui`), so all devices share them; a local copy applies them instantly at startup. The connection is the exception: it is stored per device |
@@ -38,21 +40,23 @@ flowchart LR
         CH[ChartService<br/>ranges, resampling, indicators]
         WL[(SQLite<br/>groups + settings)]
     end
-    subgraph Data provider
-        AGG[finance aggregator<br/>embedded or remote]
+    subgraph Data provider [any computer]
+        AGG[finance aggregator service<br/>finance-aggregator serve]
     end
     B --> S
     B --> API
     A -- configurable URL, CORS, API key --> API
     API --> WL
-    API --> CH --> AGG
+    API --> CH -- HTTP, aggregator.url, X-API-Key --> AGG
 ```
+
+Stock splits are handled where the data is stored (yahoo-db re-downloads a ticker's history after a split),
+so owl shows the bars exactly as the aggregator delivers them.
 
 | Module | Responsibility |
 |--------|----------------|
-| `owl/market_data.py` | Owl's link to the data provider. In `embedded` mode it builds the aggregator's provider chain in-process (`finance_aggregator.app.create_aggregator`). In `remote` mode, `RemoteAggregatorSource` calls the aggregator's `serve` HTTP API. Both implement the aggregator contract (`StockDataSource` + `FinanceService`), so the rest of owl does not know which one it uses |
+| `owl/market_data.py` | Owl's only link to market data: `RemoteAggregatorSource` calls the aggregator's `serve` HTTP API and implements the aggregator contract (`StockDataSource` + `FinanceService`). Owl imports only the aggregator's data contracts (`finance_aggregator.core`, standard library only), not its providers |
 | `owl/charts.py` | `ChartRange`, `Interval` (daily → weekly/monthly resampling, which keeps the mixed provider tags), and the `Indicator` registry (`SimpleMovingAverage`, `ExponentialMovingAverage`). `ChartService` works out the fetch window (range + indicator warm-up, at least 400 days for daily charts) and builds the payload |
-| `owl/splits.py` | `SplitCorrector`: detects bars stored on a pre-split scale against `YahooSplitReference`, rescales them, and keeps the corrections in `SplitCorrectionStore` (owl's SQLite) |
 | `owl/watchlist.py` | `WatchlistRepository` interface, with `SqliteWatchlistRepository` as the implementation (groups, items, settings) |
 | `owl/server.py` | Router, `OwlApi` (transport independent), `StaticFiles` (path-traversal safe, ETag), and the HTTP handler (CORS, API key, JSON-only writes, body size limit, security headers / CSP) |
 | `owl/app.py` | Composition root (`OwlApplication`) and the command line |
@@ -107,9 +111,9 @@ Status codes: 400 invalid input, 401 API key, 404 not found, 409 conflict, 415 n
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `aggregator.mode` | `embedded` | `embedded`: run the provider chain in-process. `remote`: use a running aggregator (`finance-aggregator serve`) |
-| `aggregator.config_file` | `../../data-providers/finance-aggregator/config.json` | Aggregator config for embedded mode |
-| `aggregator.url` / `api_key` / `timeout_seconds` | `http://127.0.0.1:5100` | Remote mode connection |
+| `aggregator.url` | `http://127.0.0.1:5100` | Address of the finance aggregator service (`finance-aggregator serve`). Can be another computer, e.g. `http://192.168.1.20:5100` |
+| `aggregator.api_key` | `null` | Sent as `X-API-Key`; must match the aggregator's `server.api_key` (required when the aggregator listens on the network) |
+| `aggregator.timeout_seconds` | `30` | Timeout per request to the aggregator |
 | `server.host` / `port` | `127.0.0.1` / `8710` | Listen address |
 | `server.api_key` | `null` | When set, every `/api/*` call except health needs `X-API-Key`. Can also be set with the env var `OWL_API_KEY` |
 | `server.cors_origins` | `http://localhost`, `https://localhost`, `capacitor://localhost` | Origins allowed to call the API cross-origin (the Android app). `*` is rejected |
@@ -120,20 +124,38 @@ Status codes: 400 invalid input, 401 API key, 404 not found, 409 conflict, 415 n
 | `browser.app_window` | `true` | Open as an app window (`--app`, no tabs or address bar) instead of a normal tab |
 | `browser.exit_on_close` | `true` | Closing the local Chrome window stops owl. The local Chrome also ends with owl, even when owl is killed. This doesn't apply to the installed Chrome or the default browser, because owl can't tell when those windows close |
 | `browser.profile_dir` | `null` | Profile of the local Chrome. Default `%LOCALAPPDATA%\owl\chrome-profile` (Linux: `~/.local/share/owl/chrome-profile`) |
-| `storage.database` | `./data/owl.db` | Watchlist, settings and split corrections |
-| `splits.enabled` | `true` | Correct history stored before a stock split (Yahoo Finance is the reference) |
-| `splits.recheck_hours` | `24` | How long a symbol's split check is reused before Yahoo Finance is asked again |
+| `storage.database` | `./data/owl.db` | Watchlist and settings |
 | `web.root` | `null` | Override the UI folder (default: `web/`, or the copy bundled in the executable) |
 | `logging.*` | | Same keys as the aggregator (`level`, `file`, `max_bytes`, `backup_count`) |
 
 Override the config path with `--config <path>` or the env var `OWL_CONFIG`. Command line
 options: `--host`, `--port`, `--no-browser`, `--log-level`, `--version`.
 
+### Connecting to the aggregator
+
+Owl needs a running aggregator. Its `run.cmd` / `run.sh` opens the aggregator's interactive CLI and serves
+the HTTP API Owl uses at the same time. On the same PC:
+
+```bat
+..\..\data-providers\finance-aggregator\run.cmd      :: CLI + HTTP API on http://127.0.0.1:5100 (Linux: run.sh)
+```
+
+On another computer, let the aggregator listen on the network with an API key (in its `config.json`:
+`"server": {"host": "0.0.0.0", "port": 5100, "api_key": "<long random string>"}`) and point owl at it:
+
+```json
+"aggregator": {"url": "http://192.168.1.20:5100", "api_key": "<the same key>", "timeout_seconds": 30}
+```
+
+When the aggregator can't be reached, owl keeps running: the status bar shows *data provider unavailable*
+and owl reconnects automatically once the aggregator is back.
+
 ## Run, build and dependencies
 
 The run scripts share the aggregator's environment tooling: venv creation, detection and repair
 of a moved venv, the `get-pip` fallback on Ubuntu, and the requirement/version check with a hash
-stamp. Owl's `requirements.txt` includes the aggregator's requirements.
+stamp. Owl needs only the Python standard library at runtime (its `requirements.txt` is empty); the
+aggregator's data contracts are imported from its sources (`OWL_AGGREGATOR_DIR`).
 
 | | Windows | Linux |
 |--|---------|-------|
@@ -146,9 +168,10 @@ Environment overrides: `OWL_VENV`, `OWL_AGGREGATOR_DIR`, `FINANCE_PYTHON`. On WS
 checkout on `/mnt/c`, put the venv on the Linux file system, e.g.
 `OWL_VENV=$HOME/.venvs/owl ./build.sh`.
 
-Each executable bundles the web UI, the aggregator package and the yahoo-db REST client. The
-build writes `config.json` and `aggregator.json` (the provider chain) next to the executable;
-existing files are never overwritten. Owl stores its data in `data/owl.db` next to the config.
+Each executable bundles the web UI and the aggregator's data contracts (no data providers). The
+build writes `config.json` next to the executable; an existing one is kept, and settings of the
+removed embedded aggregator (`aggregator.mode`, `aggregator.config_file`, `splits`) are dropped from it.
+Owl stores its data in `data/owl.db` next to the config.
 `owl.exe` has no terminal window. The UI is the Chrome window, and closing it stops owl
 (`browser.exit_on_close`). Startup errors, such as a bad config or a port in use, appear in a
 message box and in `logs/owl.log`. Starting owl again while it runs just opens a window on the
@@ -191,7 +214,7 @@ owl behind HTTPS (a reverse proxy).
 | `test_charts.py` | SMA/EMA maths, indicator parsing, weekly/monthly resampling (including mixed provider tags), ranges, warm-up window, quote, 1D/ALL behaviour |
 | `test_watchlist.py` | Group and item CRUD, conflicts, cascade delete, seeding exactly once, persistence, settings size limit |
 | `test_server.py` | REST API status codes, no leaking of provider details, static path traversal, ETag/304, CSP, CORS allow-list, API key, JSON-only writes, body limit, refusing to bind insecurely |
-| `test_market_data.py` | `RemoteAggregatorSource` against the **real aggregator HTTP server** (bar sources preserved, errors translated, unreachable server), embedded mode, config validation |
+| `test_market_data.py` | `RemoteAggregatorSource` against the **real aggregator HTTP server** (bar sources preserved, errors translated, unreachable server), config validation |
 
 ## Limitations and next steps
 
