@@ -87,6 +87,11 @@ class TestApi:
         assert call(api, "PUT", "/api/settings/other", {"x": 1})[0] == 404
         assert call(api, "PUT", "/api/settings/chart", [1, 2])[0] == 400
 
+    def test_gui_settings_roundtrip(self, api: OwlApi) -> None:
+        value = {"workbench.explorerPosition": "left", "explorer.priceRefreshSeconds": 120}
+        assert call(api, "PUT", "/api/settings/ui", value)[0] == 200
+        assert call(api, "GET", "/api/settings/ui")[1]["data"] == value
+
     def test_routing_errors(self, api: OwlApi) -> None:
         assert call(api, "GET", "/api/nope")[0] == 404
         assert call(api, "PUT", "/api/groups")[0] == 405

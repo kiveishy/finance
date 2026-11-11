@@ -360,6 +360,12 @@ class OwlHttpServer(ThreadingHTTPServer):
         self.static = static
         super().__init__((config.host, config.port), _RequestHandler)
 
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        if isinstance(sys.exc_info()[1], (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+            logger.debug("Client %s disconnected before the response was sent", client_address)
+            return
+        super().handle_error(request, client_address)
+
 
 class _RequestHandler(BaseHTTPRequestHandler):
     server: OwlHttpServer
@@ -394,6 +400,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             return
         rejection = self._authorize(method, path)
         if rejection is not None:
+            self._discard_body()
             self._send(rejection)
             return
         try:
@@ -415,6 +422,17 @@ class _RequestHandler(BaseHTTPRequestHandler):
         if method in _WRITE_METHODS and not self.headers.get("Content-Type", "").startswith("application/json"):
             return error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Content-Type must be application/json")
         return None
+
+    def _discard_body(self) -> None:
+        """Read an unused request body: closing with unread data resets the socket before the client reads the reply."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if 0 < length <= MAX_DRAIN_BYTES:
+            self.rfile.read(length)
+        elif length:
+            self.close_connection = True
 
     def _read_json(self) -> Any:
         try:

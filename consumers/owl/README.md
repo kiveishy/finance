@@ -9,7 +9,7 @@ executable on Windows and Linux, and as an Android APK (a Capacitor wrapper arou
 
 | Area | What you get |
 |------|--------------|
-| **Watchlist** | Groups shown as folders in the Explorer, with symbols inside. You can create, rename and delete groups, and add or remove symbols. Symbols are validated against the aggregator and company names are shown next to them. The same symbol can be in several groups. Every symbol shows its **last price and day change** (green/red). Prices refresh every 60 s; the server caches them and prefetches them at startup |
+| **Watchlist** | Groups shown as folders in the Explorer, with symbols inside. You can create, rename and delete groups, and add or remove symbols. Symbols are validated against the aggregator and company names are shown next to them. The same symbol can be in several groups. Every symbol shows its **last price and day change** (green/red). Each group row shows a **summary**: how many of its symbols are up ▲ and down ▼ today, and their average day change (equal-weighted). Hover it for the best and worst symbol. Prices refresh every 60 s; the server caches them and prefetches them at startup |
 | **Drag and drop** | Drag a symbol onto another group to **move** it, or **Ctrl+drag** (Alt on macOS) to **copy** it. Dropping onto a symbol inserts it before that one, which also reorders symbols within a group. On touch screens, where dragging isn't available, the **Move to group…** row action does the same |
 | **Interactive search** | **Ctrl+P** (Go to symbol) and **Add symbol** suggest matches as you type, by ticker *or* company name (`nvid`, `apple`, `berkshire`). **Add symbol** asks for the stock first and only then for the group (skipped when there is a single group or when started from a group's **+** button); groups that already contain the stock are marked. Each match shows the symbol, the company name with the typed text highlighted, the exchange and type (Stock, ETF, Index, Future, ...), and which watchlist groups already contain it ("already in this group" when adding). Watchlist symbols appear instantly, and data-provider results follow after a 200 ms debounce. Arrow keys move through the list. Enter takes the highlighted match; pressed while results are still loading, it waits for them. A typed ticker that isn't listed is still accepted |
 | **Ranges** | 1D · 1W · 1M · 3M · 6M · 1Y · 2Y · 5Y · ALL |
@@ -18,6 +18,7 @@ executable on Windows and Linux, and as an Android APK (a Capacitor wrapper arou
 | **Chart** | Candles and indicator lines, with **volume as bars in a resizable pane at the bottom**. Mouse-wheel / pinch zoom and drag to scroll, plus zoom in, zoom out and reset buttons. A crosshair legend shows OHLC, change, volume, MA values and the **data provider of the bar** |
 | **Split correction** | Stored history (yahoo-db) keeps the price scale it had when downloaded, so a later split made the chart jump (e.g. ETHA, 1:3 in Oct 2026: older bars at ⅓ of the price). Owl compares the bars with Yahoo Finance's split-adjusted closes and rescales runs that jump by a split ratio and stay on the old scale (volume too). Dividends shift that ratio only gradually, and single bad ticks are ignored. Corrections are saved in `owl.db` (`split_corrections`) and re-checked once a day, or when older history is requested. Each saved correction remembers the raw closes of its first and last bar. If the source later serves different values (e.g. yahoo-db re-downloaded the history), the correction is dropped and re-checked at once, so already-correct data is never corrected twice. Yahoo's own bars are never changed |
 | **VS Code look** | Activity bar, Explorer tree, editor tabs (one per symbol, middle-click closes), breadcrumbs, a command-palette style quick input (**Ctrl+P** opens Go to symbol), notifications, and a status bar showing aggregator health and price bars per provider |
+| **Settings** | **Ctrl+,** or the gear icon opens a VS Code-style **Settings** tab. It has a search box and sections, shows a reset button next to each changed setting, and validates input (e.g. a value outside the allowed range is rejected with a message). Settings: **Explorer position** (left / **right**, the default; on phones the drawer slides in from that side), Explorer width (also set by dragging its edge), show prices, show day change, price refresh interval (15-3600 s), reset indicators, owl server connection and data provider status. They apply at once and are saved on the server (`/api/settings/ui`), so all devices share them; a local copy applies them instantly at startup. The connection is the exception: it is stored per device |
 | **Mobile** | Below 768 px the sidebar becomes a drawer (☰), rows get touch-sized, and the toolbar scrolls horizontally |
 | **Connection status** | The status bar always shows the data provider state: *online*, *degraded* (amber, with the list of providers that are down), *data provider unavailable*, *owl server offline*, or *unauthorized*. When data can't be loaded, a red banner explains why, shows a reconnect countdown, and offers **Retry now** and **Details** (each provider's state in fallback order). Owl reconnects automatically: it checks every 30 s while healthy, and after a failure retries with backoff (3 → 5 → 10 → 15 s). It also checks immediately when a request fails, when the network comes back, or when the app returns to the foreground. On recovery a notification appears and the open chart and watchlist reload by themselves. The server caches provider status for 5 s (`/api/status?refresh=1` bypasses the cache), so many clients don't hammer the providers |
 
@@ -53,7 +54,7 @@ flowchart LR
 | `owl/watchlist.py` | `WatchlistRepository` interface, with `SqliteWatchlistRepository` as the implementation (groups, items, settings) |
 | `owl/server.py` | Router, `OwlApi` (transport independent), `StaticFiles` (path-traversal safe, ETag), and the HTTP handler (CORS, API key, JSON-only writes, body size limit, security headers / CSP) |
 | `owl/app.py` | Composition root (`OwlApplication`) and the command line |
-| `web/` | No-build ES modules: `api.js` (REST client), `ui.js` (DOM helpers, quick input, notifications), `explorer.js`, `chart.js` (Lightweight Charts wrapper), `app.js` (workbench wiring). Vendored libraries are in `web/vendor/` (licenses included) |
+| `web/` | No-build ES modules: `api.js` (REST client), `ui.js` (DOM helpers, quick input, notifications), `explorer.js`, `chart.js` (Lightweight Charts wrapper), `settings.js` (settings store and Settings tab), `app.js` (workbench wiring and the settings schema). Vendored libraries are in `web/vendor/` (licenses included) |
 
 **Data provenance.** The aggregator tags every price bar with the provider that supplied it, and
 owl passes that tag all the way to the UI: the crosshair legend shows the source of the hovered
@@ -65,6 +66,14 @@ means yahoo-db was stale and its tail was filled from Yahoo Finance.
 Subclass `Indicator` in `owl/charts.py`, implement `compute(closes)`, and register it in
 `INDICATORS`. The REST API accepts the new type at once (`indicators=rsi:14`). For the UI, add
 the type to `INDICATOR_RE` in `web/js/app.js`.
+
+### Adding a setting
+
+Add one entry to `settingsSchema()` in `web/js/app.js`:
+`{key, section, title, description, type, default}`. `type` is `enum` (with `options`), `boolean`,
+`number` (with `min`, `max`, `unit`), or `action` (a button with `run()`). Then read the value with
+`this.settings.get(key)` and apply it in `applySettings()`. The Settings tab, validation, reset,
+local caching and server storage come from `web/js/settings.js`; no server change is needed.
 
 ## REST API
 
@@ -86,6 +95,7 @@ All responses have the shape `{"status": "success", "data": ...}` or `{"status":
 | GET | `/api/search?q=QUERY[&limit=N]` | Type-ahead symbol search through the aggregator (ticker or company name). Each match also lists the watchlist `groups` that contain it |
 | GET | `/api/chart/{symbol}?range=6M&interval=D&indicators=sma:20,ema:9` | Bars (with `source`), indicator series, quote, `visible_from`, `sources` |
 | GET/PUT | `/api/settings/chart` | Indicator settings (shared across devices) |
+| GET/PUT | `/api/settings/ui` | GUI settings of the Settings tab, as `{"<key>": value}` (only values that differ from the default) |
 
 Status codes: 400 invalid input, 401 API key, 404 not found, 409 conflict, 415 non-JSON write,
 502 provider error, 503 provider unavailable.
@@ -160,8 +170,8 @@ run Python, so the app talks to an owl server over the network.
    "server": {"host": "0.0.0.0", "port": 8710, "api_key": "<long random string>"}
    ```
 4. Install the APK. On first start the app asks for the server URL (e.g.
-   `http://192.168.1.20:8710`) and the API key. You can change them later with Settings (gear
-   icon).
+   `http://192.168.1.20:8710`) and the API key. You can change them later in Settings (gear
+   icon) → Connection → Owl Server.
 
 The app's origin is `http://localhost`, which is already in `cors_origins`, and plain-HTTP
 requests to the LAN server are allowed (`server.cleartext`). For access over the internet, put

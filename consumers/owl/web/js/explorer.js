@@ -66,6 +66,7 @@ export class Explorer {
             },
                 el("span", { class: "twistie" }, icon(open ? "chevron-down" : "chevron-right")),
                 el("span", { class: "label" }, group.name),
+                this.groupChangeCell(group),
                 el("span", { class: "badge" }, String(group.items.length)),
                 el("span", { class: "row-actions" },
                     this.action("add", "Add symbol to group", () => this.handlers.onAddSymbol(group.id)),
@@ -100,6 +101,28 @@ export class Explorer {
             rows.push(el("div", { class: "tree-row", style: "padding-left: 20px; color: var(--fg-muted)" }, "No groups yet"));
         }
         this.root.replaceChildren(...rows);
+    }
+
+    /** Equal-weighted average day change of the group's symbols that have a quote. */
+    groupChangeCell(group) {
+        const changes = group.items
+            .map((item) => ({ symbol: item.symbol, pct: this.quotes[item.symbol]?.change_percent }))
+            .filter((c) => typeof c.pct === "number");
+        if (!changes.length) return null;
+        const average = changes.reduce((sum, c) => sum + c.pct, 0) / changes.length;
+        const up = changes.filter((c) => c.pct > 0).length;
+        const down = changes.filter((c) => c.pct < 0).length;
+        const sorted = [...changes].sort((a, b) => b.pct - a.pct);
+        const fmt = (pct) => `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`;
+        const direction = average > 0 ? "up" : average < 0 ? "down" : "";
+        return el("span", {
+            class: "group-change",
+            title: `Average day change of ${changes.length} of ${group.items.length} symbols: ${fmt(average)}\n` +
+                `${up} up, ${down} down, ${changes.length - up - down} unchanged\n` +
+                `Best: ${sorted[0].symbol} ${fmt(sorted[0].pct)} · Worst: ${sorted.at(-1).symbol} ${fmt(sorted.at(-1).pct)}`,
+        },
+            el("span", { class: "counts" }, el("span", { class: "up" }, `${up}▲`), el("span", { class: "down" }, `${down}▼`)),
+            el("span", { class: `change ${direction}` }, fmt(average)));
     }
 
     quoteCell(symbol) {

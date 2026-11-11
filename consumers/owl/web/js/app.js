@@ -3,12 +3,13 @@ import { ApiClient, ApiError, loadConnection, saveConnection } from "./api.js";
 import { ChartView, DEFAULT_INDICATORS, INDICATOR_COLORS, indicatorKey, indicatorLabel } from "./chart.js";
 import { ConnectionMonitor, State } from "./connection.js";
 import { Explorer } from "./explorer.js";
+import { SettingsPage, SettingsStore } from "./settings.js";
 import { confirm, el, formatNumber, icon, notify, prompt } from "./ui.js";
 
 const RANGES = ["1D", "1W", "1M", "3M", "6M", "1Y", "2Y", "5Y", "ALL"];
 const INTERVALS = [["", "Auto", "Interval chosen by range"], ["D", "D", "Daily candles"], ["W", "W", "Weekly candles"], ["M", "M", "Monthly candles"]];
 const UI_KEY = "owl.ui";
-const QUOTE_REFRESH_MS = 60_000;
+const SETTINGS_TAB = "@settings"; // tab id that can never be a ticker symbol
 const QUOTES_PER_REQUEST = 200;
 const SYMBOL_RE = /^[A-Za-z0-9^][A-Za-z0-9.\-^=]{0,19}$/;
 const INDICATOR_RE = /^(sma|ema|ma)\s*[: ]?\s*(\d{1,4})$/i;
@@ -20,10 +21,15 @@ const $ = (id) => document.getElementById(id);
 class OwlApp {
     constructor() {
         this.api = new ApiClient();
-        this.ui = { range: "6M", interval: "", tabs: [], active: null, sidebarWidth: 260 };
+        this.ui = { range: "6M", interval: "", tabs: [], active: null };
         try {
             Object.assign(this.ui, JSON.parse(localStorage.getItem(UI_KEY) || "{}"));
         } catch { /* ignore corrupt UI state */ }
+        this.settings = new SettingsStore(this.api, this.settingsSchema());
+        this.settingsPage = new SettingsPage($("settings-panel"), this.settings, {
+            onError: (err) => this.reportError("Saving settings failed", err),
+        });
+        this.settings.addEventListener("change", (e) => this.applySettings(e.detail.keys));
         this.indicators = DEFAULT_INDICATORS.map((i) => ({ ...i }));
         this.groups = [];
         this.chart = null;
@@ -41,10 +47,92 @@ class OwlApp {
             onMoveSymbol: (from, symbol, to, options) => this.moveSymbol(from, symbol, to, options),
             onPickMoveTarget: (from, symbol) => this.pickMoveTarget(from, symbol),
         });
-        setInterval(() => this.refreshQuotes(), QUOTE_REFRESH_MS);
-        document.documentElement.style.setProperty("--sidebar-width", `${this.ui.sidebarWidth}px`);
+        this.applySettings();
         this.bindEvents();
         this.renderToolbar();
+    }
+
+    /** Every user-configurable feature is listed here; the Settings tab is generated from it. */
+    settingsSchema() {
+        return [
+            {
+                key: "workbench.explorerPosition", section: "Workbench", title: "Explorer Position", type: "enum",
+                description: "Side of the window where the Explorer (watchlist) and the activity bar are shown.",
+                options: [["left", "Left"], ["right", "Right"]], default: "right",
+            },
+            {
+                key: "workbench.explorerWidth", section: "Workbench", title: "Explorer Width", type: "number",
+                description: "Width of the Explorer. You can also drag the Explorer's edge.",
+                min: 170, max: 600, unit: "px", default: 260,
+            },
+            {
+                key: "explorer.showPrices", section: "Explorer", title: "Show Prices", type: "boolean",
+                description: "Show the last price of every symbol in the Explorer.", default: true,
+            },
+            {
+                key: "explorer.showChange", section: "Explorer", title: "Show Day Change", type: "boolean",
+                description: "Show the day change in % next to the price (green up, red down).", default: true,
+            },
+            {
+                key: "explorer.showGroupChange", section: "Explorer", title: "Show Group Summary", type: "boolean",
+                description: "Show on each group row how many of its symbols are up (▲) and down (▼) today and their average day change (equal-weighted). Hover it for the best and worst symbol.",
+                default: true,
+            },
+            {
+                key: "explorer.priceRefreshSeconds", section: "Explorer", title: "Price Refresh Interval", type: "number",
+                description: "How often the Explorer prices are refreshed.", min: 15, max: 3600, unit: "seconds", default: 60,
+            },
+            {
+                key: "chart.resetIndicators", section: "Chart", title: "Indicators", type: "action",
+                description: "Moving averages drawn on every chart. Add or toggle them with the Indicators menu of a chart.",
+                detail: () => this.indicators.map(indicatorLabel).join(", ") || "none",
+                button: "Reset to MA 20 / 50 / 200",
+                run: () => {
+                    this.indicators = DEFAULT_INDICATORS.map((i) => ({ ...i }));
+                    this.saveIndicators();
+                    this.settingsPage.render();
+                },
+            },
+            {
+                key: "connection.server", section: "Connection", title: "Owl Server", type: "action",
+                description: "Address and API key of the owl server. Only needed when the UI isn't served by owl itself (e.g. the Android app). Stored on this device only.",
+                detail: () => loadConnection().url || "This owl server",
+                button: "Edit…",
+                run: () => this.editConnection(),
+            },
+            {
+                key: "connection.providers", section: "Connection", title: "Data Providers", type: "action",
+                description: "Status of the market data providers, in fallback order.",
+                detail: () => this.connection.status?.aggregator?.detail ?? this.connection.state,
+                button: "Show status",
+                run: () => this.showStatusDetails(),
+            },
+        ];
+    }
+
+    applySettings(keys = null) {
+        const changed = (key) => keys === null || keys.includes(key);
+        const s = this.settings;
+        document.body.classList.toggle("explorer-right", s.get("workbench.explorerPosition") === "right");
+        document.documentElement.style.setProperty("--sidebar-width", `${s.get("workbench.explorerWidth")}px`);
+        document.body.classList.toggle("hide-prices", !s.get("explorer.showPrices"));
+        document.body.classList.toggle("hide-change", !s.get("explorer.showChange"));
+        document.body.classList.toggle("hide-group-change", !s.get("explorer.showGroupChange"));
+        if (changed("explorer.priceRefreshSeconds")) {
+            clearInterval(this.quoteTimer);
+            this.quoteTimer = setInterval(() => this.refreshQuotes(), s.get("explorer.priceRefreshSeconds") * 1000);
+        }
+        if (keys !== null && changed("explorer.showPrices") && s.get("explorer.showPrices")) this.refreshQuotes();
+    }
+
+    openSettings() {
+        this.open(SETTINGS_TAB);
+        this.settingsPage.focusSearch();
+    }
+
+    /** The symbol of the active chart tab (null when no tab or the Settings tab is active). */
+    get activeSymbol() {
+        return this.ui.active === SETTINGS_TAB ? null : this.ui.active;
     }
 
     async start() {
@@ -54,8 +142,8 @@ class OwlApp {
             await this.editConnection();
         }
         await this.connection.check();
-        await Promise.all([this.loadSettings(), this.refreshGroups()]);
-        this.ui.tabs = this.ui.tabs.filter((s) => SYMBOL_RE.test(s));
+        await Promise.all([this.loadSettings(), this.settings.load(), this.refreshGroups()]);
+        this.ui.tabs = this.ui.tabs.filter((s) => s === SETTINGS_TAB || SYMBOL_RE.test(s));
         if (this.ui.active && this.ui.tabs.includes(this.ui.active)) this.activate(this.ui.active);
         else this.renderTabs();
     }
@@ -74,7 +162,8 @@ class OwlApp {
             refresh: () => { this.connection.check(true); this.refreshGroups(); this.loadChart(); },
             "retry-connection": () => this.connection.check(true),
             "connection-details": () => this.showStatusDetails(),
-            settings: () => this.editConnection(),
+            settings: () => this.openSettings(),
+            "edit-connection": () => this.editConnection(),
             "zoom-in": () => this.chart?.zoom(0.7),
             "zoom-out": () => this.chart?.zoom(1.4),
             "zoom-reset": () => this.chart?.resetZoom(),
@@ -89,6 +178,9 @@ class OwlApp {
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") {
                 event.preventDefault();
                 this.goToSymbol();
+            } else if ((event.ctrlKey || event.metaKey) && event.key === ",") {
+                event.preventDefault();
+                this.openSettings();
             }
         });
         $("toggle-sidebar").addEventListener("click", () => document.body.classList.toggle("sidebar-open"));
@@ -104,14 +196,18 @@ class OwlApp {
             sash.classList.add("dragging");
             const startX = event.clientX;
             const startWidth = $("sidebar").getBoundingClientRect().width;
+            // The Explorer grows towards the editor: leftwards when it is on the right.
+            const direction = document.body.classList.contains("explorer-right") ? -1 : 1;
+            let width = startWidth;
             const move = (e) => {
-                this.ui.sidebarWidth = Math.min(600, Math.max(170, startWidth + e.clientX - startX));
-                document.documentElement.style.setProperty("--sidebar-width", `${this.ui.sidebarWidth}px`);
+                width = Math.round(Math.min(600, Math.max(170, startWidth + direction * (e.clientX - startX))));
+                document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
             };
             const up = () => {
                 sash.classList.remove("dragging");
                 sash.removeEventListener("pointermove", move);
-                this.saveUi();
+                this.settings.set("workbench.explorerWidth", width)
+                    .catch((err) => this.reportError("Saving settings failed", err));
             };
             sash.addEventListener("pointermove", move);
             sash.addEventListener("pointerup", up, { once: true });
@@ -125,7 +221,7 @@ class OwlApp {
         try {
             this.groups = await this.api.groups();
             this.explorer.setGroups(this.groups);
-            this.explorer.select(this.ui.active);
+            this.explorer.select(this.activeSymbol);
         } catch (err) {
             this.reportError("Loading watchlist failed", err);
             return;
@@ -135,7 +231,7 @@ class OwlApp {
 
     /** Current price of every watchlist symbol (the server caches them for a minute). */
     async refreshQuotes() {
-        if (!this.connection.healthy || this.quotesLoading) return;
+        if (!this.connection.healthy || this.quotesLoading || !this.settings.get("explorer.showPrices")) return;
         const symbols = this.explorer.symbols;
         if (!symbols.length) return;
         this.quotesLoading = true;
@@ -154,7 +250,7 @@ class OwlApp {
         try {
             this.groups = await this.api.moveSymbol(fromGroupId, symbol, toGroupId, { copy, before });
             this.explorer.setGroups(this.groups);
-            this.explorer.select(this.ui.active);
+            this.explorer.select(this.activeSymbol);
         } catch (err) {
             this.reportError(copy ? "Copying symbol failed" : "Moving symbol failed", err);
         }
@@ -317,8 +413,9 @@ class OwlApp {
         this.ui.active = symbol;
         this.saveUi();
         this.renderTabs();
-        this.explorer.select(symbol);
-        this.loadChart();
+        this.explorer.select(this.activeSymbol);
+        if (symbol === SETTINGS_TAB) this.settingsPage.render();
+        else this.loadChart();
     }
 
     close(symbol) {
@@ -339,27 +436,30 @@ class OwlApp {
     }
 
     renderTabs() {
-        const tabs = this.ui.tabs.map((symbol) => el("div", {
-            class: "tab" + (symbol === this.ui.active ? " active" : ""),
+        const tabs = this.ui.tabs.map((id) => el("div", {
+            class: "tab" + (id === this.ui.active ? " active" : ""),
             role: "tab",
-            title: symbol,
-            onclick: () => this.activate(symbol),
-            onauxclick: (e) => { if (e.button === 1) this.close(symbol); },
+            title: id === SETTINGS_TAB ? "Settings" : id,
+            onclick: () => this.activate(id),
+            onauxclick: (e) => { if (e.button === 1) this.close(id); },
         },
-            icon("graph-line"),
-            el("span", {}, symbol),
+            id === SETTINGS_TAB ? icon("settings-gear") : icon("graph-line"),
+            el("span", {}, id === SETTINGS_TAB ? "Settings" : id),
             el("button", {
                 class: "icon-button tab-close",
                 title: "Close",
-                onclick: (e) => { e.stopPropagation(); this.close(symbol); },
+                onclick: (e) => { e.stopPropagation(); this.close(id); },
             }, icon("close"))));
         $("tabs").replaceChildren(...tabs);
-        const hasActive = Boolean(this.ui.active);
-        $("welcome").hidden = hasActive;
-        $("chart-panel").hidden = !hasActive;
-        document.title = hasActive ? `${this.ui.active} — Owl` : "Owl";
+        const symbol = this.activeSymbol;
+        const settingsOpen = this.ui.active === SETTINGS_TAB;
+        $("welcome").hidden = Boolean(this.ui.active);
+        $("chart-panel").hidden = !symbol;
+        $("settings-panel").hidden = !settingsOpen;
+        document.querySelector('.activity[data-action="settings"]').classList.toggle("active", settingsOpen);
+        document.title = symbol ? `${symbol} — Owl` : settingsOpen ? "Settings — Owl" : "Owl";
         $("window-title").textContent = document.title;
-        if (!hasActive) {
+        if (!symbol) {
             $("status-sources").replaceChildren();
             $("status-quote").replaceChildren();
         }
@@ -380,7 +480,7 @@ class OwlApp {
     }
 
     async loadChart() {
-        const symbol = this.ui.active;
+        const symbol = this.activeSymbol;
         if (!symbol) return;
         const requestId = ++this.chartRequest;
         this.chart ??= new ChartView($("chart-container"), $("legend"));
@@ -575,12 +675,13 @@ class OwlApp {
         }
         if (this.connection.serverReachable && !wasReachable) {
             this.loadSettings();
+            this.settings.load();
             this.refreshGroups();
         } else if (this.connection.healthy && !wasHealthy) {
             this.refreshQuotes();
         }
         if (this.connection.healthy && (!wasHealthy || this.chartPending)) this.loadChart();
-        else if (!this.connection.healthy && wasHealthy && this.ui.active) this.loadChart();
+        else if (!this.connection.healthy && wasHealthy && this.activeSymbol) this.loadChart();
     }
 
     /** A tab left open across an Owl update keeps running the old UI code until reloaded. */
@@ -644,7 +745,7 @@ class OwlApp {
                 : null,
             c.state === State.PROVIDER_DOWN
                 ? el("button", { class: "banner-button secondary", "data-action": "connection-details" }, "Details")
-                : el("button", { class: "banner-button secondary", "data-action": "settings" }, "Settings"),
+                : el("button", { class: "banner-button secondary", "data-action": "edit-connection" }, "Settings"),
         ];
         const consequence = c.state === State.PROVIDER_DOWN
             ? "Prices cannot be loaded; the watchlist still works."
@@ -700,7 +801,8 @@ class OwlApp {
         this.api.configure(connection);
         notify("Connection settings saved", "info", 3000);
         await this.connection.check(true);
-        await Promise.all([this.loadSettings(), this.refreshGroups()]);
+        await Promise.all([this.loadSettings(), this.settings.load(), this.refreshGroups()]);
+        if (this.ui.active === SETTINGS_TAB) this.settingsPage.render();
         this.loadChart();
     }
 

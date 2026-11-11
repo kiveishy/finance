@@ -22,7 +22,7 @@
         <button class="activity active" data-view="explorer" title="Explorer"><i class="codicon codicon-list-tree"></i></button>
         <button class="activity" data-action="go-to-symbol" title="Go to symbol (Ctrl+P)"><i class="codicon codicon-search"></i></button>
         <div class="activity-spacer"></div>
-        <button class="activity" data-action="settings" title="Settings"><i class="codicon codicon-settings-gear"></i></button>
+        <button class="activity" data-action="settings" title="Settings (Ctrl+,)"><i class="codicon codicon-settings-gear"></i></button>
     </nav>
 
     <aside id="sidebar">
@@ -48,9 +48,10 @@
             <div class="welcome-actions">
                 <button class="link" data-action="add-symbol"><i class="codicon codicon-add"></i> Add symbol</button>
                 <button class="link" data-action="new-group"><i class="codicon codicon-new-folder"></i> New group</button>
-                <button class="link" data-action="settings"><i class="codicon codicon-settings-gear"></i> Server settings</button>
+                <button class="link" data-action="settings"><i class="codicon codicon-settings-gear"></i> Settings (Ctrl+,)</button>
             </div>
         </div>
+        <div id="settings-panel" class="settings" hidden></div>
         <div id="chart-panel" hidden>
             <div id="breadcrumbs"></div>
             <div id="chart-toolbar">
