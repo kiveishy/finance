@@ -282,6 +282,8 @@ body.hide-group-change .tree-row .group-change { display: none; }
 .toolbar-button.active { color: #ffffff; background: rgba(0, 122, 204, 0.35); }
 .icon-button:disabled { opacity: 0.4; cursor: default; background: none; }
 #chart-container.drawing { cursor: crosshair; }
+.toolbar-button.trade-buy .codicon { color: #26a69a; }
+.toolbar-button.trade-sell .codicon { color: #ef5350; }
 .toolbar-spacer { flex: 1; }
 
 .dropdown { position: relative; }
@@ -370,6 +372,52 @@ body.hide-group-change .tree-row .group-change { display: none; }
 .banner-button.secondary:hover { background: #45494e; }
 .status-item:hover { background: rgba(255, 255, 255, 0.12); }
 .status-item .codicon { font-size: 14px; }
+
+/* ---- form dialog (e.g. Buy / Sell) ------------------------------------------------------- */
+.form-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 60px;
+    z-index: 110;
+}
+.form-dialog {
+    width: min(360px, calc(100vw - 24px));
+    background: var(--widget-bg);
+    box-shadow: var(--widget-shadow);
+    border-radius: 6px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.form-title { font-weight: 600; }
+.form-row { display: flex; align-items: center; gap: 10px; }
+.form-row > span { width: 110px; flex: none; color: var(--fg-muted); }
+.form-row input {
+    flex: 1;
+    min-width: 0;
+    background: var(--input-bg);
+    color: var(--fg);
+    border: 1px solid var(--input-border);
+    padding: 4px 6px;
+    font: inherit;
+    outline: none;
+    color-scheme: dark;
+    user-select: text;
+}
+.form-row input:focus { border-color: var(--focus); }
+.form-preview { color: var(--fg-muted); min-height: 16px; }
+.form-message { color: var(--error); min-height: 16px; }
+.form-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+.form-buttons .banner-button { padding: 4px 14px; }
+.banner-button.buy { background: #1f8b7e; }
+.banner-button.buy:hover { background: var(--up); }
+.banner-button.sell { background: #c43c3a; }
+.banner-button.sell:hover { background: var(--down); }
 
 /* ---- quick input (command palette style) ------------------------------------------------- */
 #quickinput {

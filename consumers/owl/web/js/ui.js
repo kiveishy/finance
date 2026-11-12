@@ -239,6 +239,57 @@ export async function confirm(title, confirmLabel = "Yes") {
     return answer === "yes";
 }
 
+/**
+ * Modal form dialog. fields: [{name, label, type, value, placeholder, step, min, max}];
+ * validate(values) -> error text | null; preview(values) -> text shown above the buttons.
+ * Resolves with {name: string value} on submit, or null when cancelled (Esc, Cancel, click outside).
+ */
+export function showForm({ title, fields, submitLabel = "OK", submitClass = "", validate = () => null, preview = null }) {
+    return new Promise((resolve) => {
+        const inputs = Object.fromEntries(fields.map((f) => [f.name, el("input", {
+            type: f.type || "text", name: f.name, value: f.value ?? "", placeholder: f.placeholder,
+            step: f.step, min: f.min, max: f.max, autocomplete: "off", spellcheck: "false",
+        })]));
+        const values = () => Object.fromEntries(Object.entries(inputs).map(([name, input]) => [name, input.value.trim()]));
+        const info = el("div", { class: "form-preview" });
+        const message = el("div", { class: "form-message" });
+        const update = () => {
+            if (preview) info.textContent = preview(values()) ?? "";
+            message.textContent = "";
+        };
+        const close = (result) => {
+            overlay.remove();
+            document.removeEventListener("keydown", onKey, true);
+            resolve(result);
+        };
+        const submit = (event) => {
+            event?.preventDefault();
+            const error = validate(values());
+            if (error) message.textContent = error;
+            else close(values());
+        };
+        const onKey = (event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            close(null);
+        };
+        const form = el("form", { class: "form-dialog", novalidate: true, onsubmit: submit, oninput: update },
+            el("div", { class: "form-title" }, title),
+            fields.map((f) => el("label", { class: "form-row" }, el("span", {}, f.label), inputs[f.name])),
+            info,
+            message,
+            el("div", { class: "form-buttons" },
+                el("button", { type: "button", class: "banner-button secondary", onclick: () => close(null) }, "Cancel"),
+                el("button", { type: "submit", class: `banner-button ${submitClass}`.trim() }, submitLabel)));
+        const overlay = el("div", { class: "form-overlay", onmousedown: (e) => { if (e.target === overlay) close(null); } }, form);
+        document.addEventListener("keydown", onKey, true);
+        document.body.append(overlay);
+        update();
+        inputs[fields[0].name].focus();
+    });
+}
+
 export function formatNumber(value, digits = 2) {
     if (value === null || value === undefined || Number.isNaN(value)) return "—";
     return Number(value).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });

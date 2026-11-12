@@ -22,13 +22,34 @@ const NOTE = {
 };
 export const MAX_DRAWINGS_PER_SYMBOL = 100;
 export const MAX_NOTE_LENGTH = 500;
-export const DRAWING_TYPES = ["line", "arrow", "note"];
+export const DRAWING_TYPES = ["line", "arrow", "note", "trade"];
+const MODES = ["line", "arrow", "note"];
+const TRADE_STYLE = {
+    buy: { label: "BUY", fill: "#0d3b33", border: "#26a69a", text: "#ffffff" },
+    sell: { label: "SELL", fill: "#4a1d1f", border: "#ef5350", text: "#ffffff" },
+};
 
 const dayOf = (iso) => Date.parse(`${iso}T00:00:00Z`) / DAY_MS;
+/** "YYYY-MM-DD" of a stored day number. */
+export const isoOf = (day) => new Date(Math.round(day) * DAY_MS).toISOString().slice(0, 10);
 const round = (value, digits) => Number(value.toFixed(digits));
 const typeOf = (drawing) => drawing.type ?? "line";
+const isBubble = (drawing) => typeOf(drawing) === "note" || typeOf(drawing) === "trade";
 let nextId = Date.now();
 const newId = () => `l${(nextId++).toString(36)}`;
+
+const formatAmount = (value) => value.toLocaleString("en-US", { maximumFractionDigits: 8 });
+const formatPrice = (value) => value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: value < 1 ? 8 : 2 });
+/** A clicked price rounded the way prices are quoted: cents, or 4 significant digits below 1. */
+export const roundPrice = (price) => (price >= 1 ? round(price, 2) : Number(price.toPrecision(4)));
+
+export function tradeText(trade) {
+    const { label } = TRADE_STYLE[trade.side];
+    const total = `Total ${formatPrice(trade.amount * trade.price)}`;
+    return `${label} ${formatAmount(trade.amount)} @ ${formatPrice(trade.price)}\n${isoOf(trade.a.day)} · ${total}`;
+}
+
+const bubbleText = (drawing) => (typeOf(drawing) === "trade" ? tradeText(drawing) : drawing.text);
 
 let measureContext = null;
 const wrapCache = new Map();
@@ -116,18 +137,20 @@ function pointInRect(p, r) {
 export class ChartDrawings {
     /**
      * handlers: onChange(drawings) after a drawing is created, moved, stretched, edited or deleted;
-     *           onState() when the mode or selection change; requestText(initial) -> Promise<string | null> for comments
+     *           onState() when the mode or selection change; requestText(initial) -> Promise<string | null> for comments;
+     *           requestTrade(side, {price, amount, date}) -> Promise<{price, amount, date} | null> to edit a BUY / SELL label
      */
     constructor(view, handlers) {
         this.view = view;
         this.handlers = handlers;
-        this.lines = []; // all drawings of the symbol: {id, type, a: {day, price}, b: {day, price}, text?}
+        // all drawings of the symbol: {id, type, a: {day, price}, b: {day, price}, text?, side?, price?, amount?}
+        this.lines = [];
         this.index = null;
         this.selectedId = null;
-        this.mode = null; // the type being created, or null
+        this.mode = null; // "line" | "arrow" | "note" while creating, else null
         this.draft = null; // line/arrow being drawn: its end follows the pointer
-        this.pendingNote = null; // comment target clicked; the text is asked for on pointer up
-        this.pendingEdit = null; // id of a double-clicked comment, edited on pointer up
+        this.pendingLabel = null; // {mode, anchor} of a clicked comment point; its text is asked for on pointer up
+        this.pendingEdit = null; // id of a double-clicked comment/trade, edited on pointer up
         this.lastPress = null; // {id, time} of the last press on a drawing, to detect double-clicks
         this.drag = null; // {id, part: "a" | "b" | "line" | "body", start: point, original: drawing}
         this.points = new Map(); // id -> {a, b, rect?, lines?} in pane coordinates, refreshed on every chart update
@@ -152,14 +175,14 @@ export class ChartDrawings {
     setLines(lines) {
         this.lines = Array.isArray(lines) ? lines.filter(isValidDrawing).map((line) => structuredClone(line)) : [];
         this.selectedId = null;
-        this.pendingNote = null;
+        this.pendingLabel = null;
         this.cancelDrawing();
         this.requestUpdate();
         this.handlers.onState?.();
     }
 
     startDrawing(type = "line") {
-        if (!DRAWING_TYPES.includes(type) || this.lines.length >= MAX_DRAWINGS_PER_SYMBOL) return false;
+        if (!MODES.includes(type) || this.lines.length >= MAX_DRAWINGS_PER_SYMBOL) return false;
         this.draft = null;
         this.mode = type;
         this.selectedId = null;
@@ -186,14 +209,7 @@ export class ChartDrawings {
         // The symbol may have changed (or everything been cleared) while the prompt was open.
         if (!text || this.lines !== lines || this.lines.length >= MAX_DRAWINGS_PER_SYMBOL) return;
         const tip = this.toPoint(target);
-        if (!tip) return;
-        // Put the bubble up-right of the point, or to the other side where it would leave the pane.
-        const { lines: rows, width } = wrapText(text);
-        const w = width + 2 * NOTE.padding;
-        const h = rows.length * NOTE.lineHeight + 2 * NOTE.padding;
-        const dx = tip.x + 20 + w <= this.view.chart.timeScale().width() ? 20 + w / 2 : -(20 + w / 2);
-        const dy = tip.y - 40 - h >= 0 ? -(40 + h / 2) : 40 + h / 2;
-        const body = this.toAnchor({ x: tip.x + dx, y: tip.y + dy });
+        const body = tip && this.bubbleCentre(tip, text, { beside: true });
         if (!body) return;
         const note = { id: newId(), type: "note", a: target, b: body, text };
         this.lines.push(note);
@@ -201,14 +217,68 @@ export class ChartDrawings {
         this.changed();
     }
 
-    /** Asks for a new text for the selected (or given) comment. */
-    async editNote(id = this.selectedId) {
-        const note = this.lines.find((line) => line.id === id);
-        if (!note || typeOf(note) !== "note") return;
+    /** Adds a BUY / SELL label at `date` ("YYYY-MM-DD") pointing at `price`; false when the symbol is full. */
+    addTrade(side, { amount, price, date }) {
+        if (!Object.hasOwn(TRADE_STYLE, side) || this.lines.length >= MAX_DRAWINGS_PER_SYMBOL) return false;
+        const trade = { id: newId(), type: "trade", side, price, amount, a: { day: dayOf(date), price } };
+        const tip = this.toPoint(trade.a);
+        // Without a loaded chart there are no pixels: put the bubble 5% below / above the price instead.
+        trade.b = (tip && this.bubbleCentre(tip, tradeText(trade), { below: side === "buy" }))
+            ?? { day: trade.a.day, price: price * (side === "buy" ? 0.95 : 1.05) };
+        this.lines.push(trade);
+        this.selectedId = trade.id;
+        this.changed();
+        return true;
+    }
+
+    /**
+     * Anchor of a bubble centre near `tip`: above it (below when `below` is set), or on the other side where it
+     * would leave the pane; `beside` also moves it to the right (left near the right edge).
+     */
+    bubbleCentre(tip, text, { below = false, beside = false } = {}) {
+        const { lines: rows, width } = wrapText(text);
+        const w = width + 2 * NOTE.padding;
+        const h = rows.length * NOTE.lineHeight + 2 * NOTE.padding;
+        const gap = beside ? 40 : 30;
+        const fitsAbove = tip.y - gap - h >= 0;
+        const fitsBelow = tip.y + gap + h <= this.view.chart.panes()[0].getHeight();
+        const down = below ? fitsBelow || !fitsAbove : !fitsAbove;
+        let dx = 0;
+        if (beside) dx = tip.x + 20 + w <= this.view.chart.timeScale().width() ? 20 + w / 2 : -(20 + w / 2);
+        return this.toAnchor({ x: tip.x + dx, y: tip.y + (down ? gap + h / 2 : -(gap + h / 2)) });
+    }
+
+    /** The day of the bar nearest to `day` (unchanged outside the loaded bars). */
+    snapDay(day) {
+        const days = this.index?.days;
+        if (!days) return day;
+        const i = Math.round(this.index.toLogical(day));
+        return i >= 0 && i < days.length ? days[i] : day;
+    }
+
+    /** Edits the selected (or given) comment's text, or a trade's amount, price and date. */
+    async editLabel(id = this.selectedId) {
+        const item = this.lines.find((line) => line.id === id);
+        if (!item || !isBubble(item)) return;
         const lines = this.lines;
-        const text = await this.handlers.requestText?.(note.text);
-        if (!text || text === note.text || this.lines !== lines || !lines.includes(note)) return;
-        note.text = text;
+        const unchanged = () => this.lines !== lines || !lines.includes(item);
+        if (typeOf(item) === "note") {
+            const text = await this.handlers.requestText?.(item.text);
+            if (!text || text === item.text || unchanged()) return;
+            item.text = text;
+        } else {
+            const answer = await this.handlers.requestTrade?.(item.side,
+                { price: item.price, amount: item.amount, date: isoOf(item.a.day) });
+            if (!answer || unchanged()) return;
+            // Keep the bubble where it was relative to its tip.
+            const tip = this.toPoint(item.a);
+            const body = this.toPoint(item.b);
+            const day = answer.date === isoOf(item.a.day) ? item.a.day : dayOf(answer.date);
+            Object.assign(item, { price: answer.price, amount: answer.amount, a: { day, price: answer.price } });
+            const newTip = this.toPoint(item.a);
+            const moved = tip && body && newTip && this.toAnchor({ x: newTip.x + body.x - tip.x, y: newTip.y + body.y - tip.y });
+            if (moved) item.b = moved;
+        }
         this.changed();
     }
 
@@ -262,11 +332,11 @@ export class ChartDrawings {
         return x >= 0 && y >= 0 && x <= width && y <= height ? { x, y } : null;
     }
 
-    /** Drawings in paint order: lines and arrows, then comments (on top), then the draft. */
+    /** Drawings in paint order: lines and arrows, then comments and trades (on top), then the draft. */
     paintOrder() {
-        const notes = this.lines.filter((line) => typeOf(line) === "note");
-        const others = this.lines.filter((line) => typeOf(line) !== "note");
-        return [...others, ...notes, ...(this.draft ? [this.draft] : [])];
+        const labels = this.lines.filter(isBubble);
+        const others = this.lines.filter((line) => !isBubble(line));
+        return [...others, ...labels, ...(this.draft ? [this.draft] : [])];
     }
 
     /** The handle, line or bubble under `point` (selected drawing first, then topmost; handles before bodies). */
@@ -315,15 +385,15 @@ export class ChartDrawings {
         window.addEventListener("pointerup", () => {
             this.endDrag();
             // Prompt only after the click is over, so the quick input doesn't take it as an outside click.
-            const target = this.pendingNote;
-            this.pendingNote = null;
-            if (target) this.createNote(target);
+            const label = this.pendingLabel;
+            this.pendingLabel = null;
+            if (label) this.createNote(label.anchor);
             const editId = this.pendingEdit;
             this.pendingEdit = null;
-            if (editId) this.editNote(editId);
+            if (editId) this.editLabel(editId);
         });
         window.addEventListener("pointercancel", () => {
-            this.pendingNote = null;
+            this.pendingLabel = null;
             this.pendingEdit = null;
             this.endDrag();
         });
@@ -339,7 +409,7 @@ export class ChartDrawings {
             if (!anchor) return;
             this.consume(event);
             if (this.mode === "note") {
-                this.pendingNote = anchor;
+                this.pendingLabel = { mode: this.mode, anchor };
                 this.cancelDrawing();
             } else if (!this.draft) {
                 this.draft = { id: newId(), type: this.mode, a: anchor, b: { ...anchor } };
@@ -370,9 +440,9 @@ export class ChartDrawings {
         this.consume(event);
         this.selectedId = target.id;
         const line = this.lines.find((l) => l.id === target.id);
-        // A second press on the same comment within 400 ms (double-click / double-tap) edits it.
+        // A second press on the same comment/trade within 400 ms (double-click / double-tap) edits it.
         const now = event.timeStamp;
-        if (typeOf(line) === "note" && this.lastPress?.id === line.id && now - this.lastPress.time < 400) {
+        if (isBubble(line) && this.lastPress?.id === line.id && now - this.lastPress.time < 400) {
             this.lastPress = null;
             this.pendingEdit = line.id;
             this.handlers.onState?.();
@@ -408,7 +478,9 @@ export class ChartDrawings {
             }
         } else {
             const anchor = this.toAnchor(point);
-            if (anchor) line[part] = anchor;
+            // A trade's tip stays on its price and moves only between bars.
+            if (anchor && typeOf(line) === "trade") line.a = { day: this.snapDay(anchor.day), price: line.price };
+            else if (anchor) line[part] = anchor;
         }
         this.drag.moved = true;
         this.requestUpdate();
@@ -445,11 +517,11 @@ export class ChartDrawings {
                     const a = drawings.toPoint(line.a);
                     const b = drawings.toPoint(line.b);
                     if (!a || !b) continue;
-                    if (typeOf(line) !== "note") {
+                    if (!isBubble(line)) {
                         drawings.points.set(line.id, { a, b });
                         continue;
                     }
-                    const { lines, width } = wrapText(line.text);
+                    const { lines, width } = wrapText(bubbleText(line));
                     const w = width + 2 * NOTE.padding;
                     const h = lines.length * NOTE.lineHeight + 2 * NOTE.padding;
                     drawings.points.set(line.id, { a, b, lines, rect: { x: b.x - w / 2, y: b.y - h / 2, w, h } });
@@ -474,7 +546,7 @@ export class ChartDrawings {
             const p = this.points.get(line.id);
             if (!p) continue;
             const selected = line.id === this.selectedId || line === this.draft;
-            if (p.rect) this.paintNote(ctx, p, selected);
+            if (p.rect) this.paintNote(ctx, p, selected, typeOf(line) === "trade" ? TRADE_STYLE[line.side] : NOTE);
             else this.paintLine(ctx, p, typeOf(line) === "arrow", selected);
             if (selected) this.paintHandles(ctx, p.rect ? [p.a] : [p.a, p.b]);
         }
@@ -503,7 +575,7 @@ export class ChartDrawings {
         ctx.fill();
     }
 
-    paintNote(ctx, { a, b, rect, lines }, selected) {
+    paintNote(ctx, { a, b, rect, lines }, selected, style) {
         const body = new Path2D();
         body.roundRect(rect.x, rect.y, rect.w, rect.h, 6);
         let tail = null;
@@ -518,12 +590,18 @@ export class ChartDrawings {
             tail.closePath();
         }
         // Stroke, then fill: the fills hide the seam between tail and bubble and keep the outer half of the border.
-        ctx.strokeStyle = selected ? LINE_COLOR : NOTE.border;
+        ctx.strokeStyle = selected ? LINE_COLOR : style.border;
         ctx.lineWidth = selected ? 3 : 2;
-        ctx.fillStyle = NOTE.fill;
+        ctx.fillStyle = style.fill;
         for (const path of [tail, body]) if (path) ctx.stroke(path);
         for (const path of [tail, body]) if (path) ctx.fill(path);
-        ctx.fillStyle = NOTE.text;
+        if (style !== NOTE) { // trade: mark the exact price
+            ctx.beginPath();
+            ctx.arc(a.x, a.y, 3, 0, Math.PI * 2);
+            ctx.fillStyle = style.border;
+            ctx.fill();
+        }
+        ctx.fillStyle = style.text;
         ctx.font = NOTE.font;
         ctx.textBaseline = "middle";
         lines.forEach((text, i) => {
@@ -549,5 +627,9 @@ function isValidDrawing(line) {
     if (!line || typeof line.id !== "string" || !anchor(line.a) || !anchor(line.b)) return false;
     const type = typeOf(line);
     if (type === "note") return typeof line.text === "string" && line.text.length > 0 && line.text.length <= MAX_NOTE_LENGTH;
+    if (type === "trade") {
+        const positive = (n) => Number.isFinite(n) && n > 0;
+        return Object.hasOwn(TRADE_STYLE, line.side) && positive(line.price) && positive(line.amount);
+    }
     return DRAWING_TYPES.includes(type);
 }

@@ -2,11 +2,11 @@
 import { ApiClient, ApiError, loadConnection, saveConnection } from "./api.js";
 import { ChartView, DEFAULT_INDICATORS, INDICATOR_COLORS, indicatorKey, indicatorLabel } from "./chart.js";
 import { ConnectionMonitor, State } from "./connection.js";
-import { ChartDrawings, MAX_DRAWINGS_PER_SYMBOL, MAX_NOTE_LENGTH } from "./drawings.js";
+import { ChartDrawings, MAX_DRAWINGS_PER_SYMBOL, MAX_NOTE_LENGTH, roundPrice } from "./drawings.js";
 import { Explorer } from "./explorer.js";
 import { describeMarket } from "./market.js";
 import { SettingsPage, SettingsStore } from "./settings.js";
-import { confirm, el, formatNumber, icon, notify, prompt } from "./ui.js";
+import { confirm, el, formatNumber, icon, notify, prompt, showForm } from "./ui.js";
 
 const RANGES = ["1D", "1W", "1M", "3M", "6M", "1Y", "2Y", "5Y", "ALL"];
 const INTERVALS = [["", "Auto", "Interval chosen by range"], ["D", "D", "Daily candles"], ["W", "W", "Weekly candles"], ["M", "M", "Monthly candles"]];
@@ -19,6 +19,7 @@ const TYPE_LABELS = { EQUITY: "Stock", ETF: "ETF", MUTUALFUND: "Fund", INDEX: "I
 const TYPE_ICONS = { EQUITY: "symbol-event", ETF: "package", MUTUALFUND: "package", INDEX: "graph", FUTURE: "clock", CRYPTOCURRENCY: "circle-large-outline", CURRENCY: "arrow-swap" };
 
 const $ = (id) => document.getElementById(id);
+const localToday = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in the user's time zone
 
 class OwlApp {
     constructor() {
@@ -107,7 +108,7 @@ class OwlApp {
             },
             {
                 key: "chart.drawings", section: "Chart", title: "Drawings", type: "action",
-                description: "Lines, arrows and comments drawn with the chart toolbar. Click one to select it, drag it to move it, drag an end (or a comment's tip) to stretch it, double-click a comment to edit it, press Delete to remove it. They are saved per symbol on the server.",
+                description: "Lines, arrows, comments and BUY / SELL labels drawn with the chart toolbar. Click one to select it, drag it to move it, drag an end (or a label's tip) to stretch it, double-click a comment or trade to edit it, press Delete to remove it. They are saved per symbol on the server.",
                 detail: () => {
                     const counts = Object.values(this.drawings).map((lines) => lines.length);
                     const total = counts.reduce((sum, n) => sum + n, 0);
@@ -203,6 +204,8 @@ class OwlApp {
             "draw-line": () => this.toggleDrawing("line"),
             "draw-arrow": () => this.toggleDrawing("arrow"),
             "draw-note": () => this.toggleDrawing("note"),
+            "draw-buy": () => this.newTrade("buy"),
+            "draw-sell": () => this.newTrade("sell"),
             "delete-line": () => this.lineTool?.deleteSelected(),
             "clear-lines": () => this.clearLines(),
         };
@@ -223,9 +226,9 @@ class OwlApp {
                 else if ((event.key === "Delete" || event.key === "Backspace") && this.lineTool.selected) {
                     event.preventDefault();
                     this.lineTool.deleteSelected();
-                } else if ((event.key === "Enter" || event.key === "F2") && this.lineTool.selected?.type === "note") {
+                } else if ((event.key === "Enter" || event.key === "F2") && ["note", "trade"].includes(this.lineTool.selected?.type)) {
                     event.preventDefault();
-                    this.lineTool.editNote();
+                    this.lineTool.editLabel();
                 }
             }
         });
@@ -540,9 +543,11 @@ class OwlApp {
                 value,
                 validate: (text) => text.length > MAX_NOTE_LENGTH ? `At most ${MAX_NOTE_LENGTH} characters` : null,
             }),
+            requestTrade: (side, initial) => this.askTrade(side, initial),
         });
         if (this.lineSymbol !== symbol) {
             this.lineSymbol = symbol;
+            this.lastPrice = null;
             this.lineTool.setBars([]);
             this.lineTool.setLines(this.drawings[symbol] ?? []);
         }
@@ -563,6 +568,7 @@ class OwlApp {
             if (requestId !== this.chartRequest) return;
             this.chart.setData(payload, this.indicators);
             this.lineTool.setBars(payload.bars);
+            this.lastPrice = payload.quote?.close ?? payload.bars.at(-1)?.close ?? null;
             this.showChartMessage(null);
             this.renderBreadcrumbs(symbol, payload);
             this.renderSources(payload);
@@ -661,6 +667,48 @@ class OwlApp {
         const active = tool.mode === type;
         tool.cancelDrawing();
         if (!active && !tool.startDrawing(type)) notify(`At most ${MAX_DRAWINGS_PER_SYMBOL} drawings per symbol`, "warning");
+    }
+
+    /** Records a purchase or sale of the open symbol: amount, price (default: last price) and date (default: today). */
+    async newTrade(side) {
+        const tool = this.lineTool;
+        const symbol = this.lineSymbol;
+        if (!tool || !symbol) return;
+        tool.cancelDrawing();
+        if (tool.lines.length >= MAX_DRAWINGS_PER_SYMBOL) {
+            notify(`At most ${MAX_DRAWINGS_PER_SYMBOL} drawings per symbol`, "warning");
+            return;
+        }
+        const price = this.lastPrice ? roundPrice(this.lastPrice) : null;
+        const answer = await this.askTrade(side, { price, amount: null, date: localToday() });
+        if (answer && this.lineSymbol === symbol) tool.addTrade(side, answer);
+    }
+
+    /** Amount, price and date of a BUY / SELL in a dialog, or null when cancelled. */
+    async askTrade(side, { price, amount, date }) {
+        const action = side === "buy" ? "Buy" : "Sell";
+        const today = localToday();
+        const number = (text) => Number(text.replace(/[,\s]/g, ""));
+        const positive = (text) => Number.isFinite(number(text)) && number(text) > 0 && number(text) < 1e12;
+        const values = await showForm({
+            title: `${action} ${this.lineSymbol}`,
+            submitLabel: action,
+            submitClass: side,
+            fields: [
+                { name: "amount", label: "Amount", type: "number", value: amount ?? "", placeholder: "Shares / units", step: "any", min: "0" },
+                { name: "price", label: "Price per unit", type: "number", value: price ?? "", placeholder: "Price", step: "any", min: "0" },
+                { name: "date", label: "Date", type: "date", value: date, max: today },
+            ],
+            validate: (v) => {
+                if (!positive(v.amount)) return "Enter an amount greater than 0";
+                if (!positive(v.price)) return "Enter a price greater than 0";
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(v.date) || Number.isNaN(Date.parse(v.date))) return "Enter a valid date";
+                return v.date > today ? "The date can't be in the future" : null;
+            },
+            preview: (v) => (positive(v.amount) && positive(v.price)
+                ? `Total: ${formatNumber(number(v.amount) * number(v.price))}` : ""),
+        });
+        return values && { amount: number(values.amount), price: number(values.price), date: values.date };
     }
 
     async clearLines() {
