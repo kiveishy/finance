@@ -279,7 +279,8 @@ class StockDataService:
         Run the main synchronization process.
         
         This method:
-        1. Gets all NASDAQ, NYSE, and NYSE Arca tickers
+        1. Gets all NASDAQ, NYSE, and NYSE Arca tickers, cryptocurrencies, USD currency pairs
+           and US government bonds
         2. Compares with saved tickers to find new ones
         3. For new tickers: fetches full historical data
         4. For existing tickers: updates with recent data
@@ -307,6 +308,9 @@ class StockDataService:
             
             # Combine all tickers (NASDAQ + NYSE + NYSE Arca)
             current_tickers_set = set(nasdaq_tickers) | set(nyse_tickers) | set(nysearca_tickers)
+
+            # Step 1d: Cryptocurrencies, currencies and government bonds (all against USD)
+            current_tickers_set |= set(self._market_tickers())
             logger.info(f"Total unique tickers: {len(current_tickers_set)}")
             
             # Step 2: Load saved tickers and compare
@@ -341,6 +345,28 @@ class StockDataService:
         except Exception as e:
             logger.error(f"Synchronization failed: {e}")
             raise
+
+    def _market_tickers(self) -> List[str]:
+        """Crypto, currency and government bond symbols selected in config.json ('markets')."""
+        markets = {'crypto': True, 'crypto_max_count': None, 'crypto_min_market_cap': 0,
+                   'currencies': True, 'government_bonds': True, **(self.config.get('markets') or {})}
+        tickers: List[str] = []
+        if markets['crypto']:
+            logger.info("Step 1d: Fetching cryptocurrency tickers...")
+            max_count = markets['crypto_max_count']
+            tickers += self.yahoo_client.get_crypto_tickers(
+                max_count=int(max_count) if max_count else None,
+                min_market_cap=float(markets['crypto_min_market_cap'] or 0),
+            )
+        if markets['currencies']:
+            currencies = self.yahoo_client.get_currency_tickers()
+            logger.info(f"Step 1e: {len(currencies)} USD currency pairs")
+            tickers += currencies
+        if markets['government_bonds']:
+            bonds = self.yahoo_client.get_government_bond_tickers()
+            logger.info(f"Step 1f: {len(bonds)} US government bond yields and futures")
+            tickers += bonds
+        return tickers
     
     def _process_new_tickers(self, tickers: List[str]):
         """

@@ -52,6 +52,28 @@ Changes apply at once and are saved in `config.json` (`scheduling`):
 The outcome of the last scheduled run is kept in `schedule_state.json` next to the database. A scheduled
 run is skipped (and logged) when an update is already running.
 
+### Crypto, currencies and government bonds
+
+Besides the NASDAQ, NYSE and NYSE Arca stocks, every update also covers (all priced against the US dollar):
+
+| Market | Symbols | Source |
+|--------|---------|--------|
+| **Cryptocurrencies** | `BTC-USD`, `ETH-USD`, ... about 8000 coins | Yahoo's "all cryptocurrencies" screener, largest market cap first |
+| **Currencies** | `ILS=X` (USD/ILS, the price of 1 USD in shekels), `EUR=X`, `JPY=X`, ... 150 currencies | Every ISO 4217 currency Yahoo quotes (`FIAT_CURRENCIES` in `yahoo_finance.py`) |
+| **US government bonds** | Treasury yields `^IRX` (13 weeks), `^FVX` (5 y), `^TNX` (10 y), `^TYX` (30 y), in percent; Treasury futures `ZT=F`, `ZF=F`, `ZN=F`, `ZB=F` | `GOVERNMENT_BONDS` in `yahoo_finance.py` |
+
+Select them in `config.json` (`markets`):
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `crypto` | `true` | Include cryptocurrencies |
+| `crypto_max_count` | `null` | Keep only the largest N coins (`null` = all) |
+| `crypto_min_market_cap` | `0` | Skip coins with a smaller market cap in USD (many tiny coins have none) |
+| `currencies` | `true` | Include the USD currency pairs |
+| `government_bonds` | `true` | Include the US Treasury yields and futures |
+
+Crypto trades every day, so these symbols also have weekend prices. Currencies and yields have no volume (0).
+
 ### REST API
 - Get list of all tickers in database
 - Get detailed ticker information
@@ -197,6 +219,7 @@ Edit `config.json` to customize behavior:
 | `yahoo_finance.data_interval` | Data granularity (1d = daily) |
 | `yahoo_finance.history_period` | Historical data period (10y = 10 years) |
 | `scheduling.*` | Daily update time, see [Daily update](#daily-update) |
+| `markets.*` | Crypto, currencies and government bonds, see [Crypto, currencies and government bonds](#crypto-currencies-and-government-bonds) |
 | `files.nasdaq_tickers` | Path to cached NASDAQ ticker list |
 | `files.nyse_tickers` | Path to cached NYSE ticker list |
 | `files.nysearca_tickers` | Path to cached NYSE Arca ticker list |

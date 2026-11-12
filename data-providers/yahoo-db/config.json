@@ -16,6 +16,13 @@
         "timezone": "Asia/Jerusalem",
         "catch_up": true
     },
+    "markets": {
+        "crypto": true,
+        "crypto_max_count": null,
+        "crypto_min_market_cap": 0,
+        "currencies": true,
+        "government_bonds": true
+    },
     "files": {
         "nasdaq_tickers": "../../../data/nasdaq_tickers.json",
         "nyse_tickers": "../../../data/nyse_tickers.json",

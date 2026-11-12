@@ -4,6 +4,7 @@ Uses yfinance library to interact with Yahoo Finance API.
 Includes retry mechanism with exponential backoff for transient failures.
 """
 
+import re
 import time
 import yfinance as yf
 import pandas as pd
@@ -11,11 +12,42 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
 
+from yfinance.data import YfData
+
 logger = logging.getLogger(__name__)
 
 # Default retry settings for Yahoo Finance API calls
 YF_MAX_RETRIES = 3
 YF_RETRY_DELAY_BASE = 1.0  # seconds, exponential backoff
+
+# Same rule as the aggregator's normalize_symbol, so every stored symbol can be requested through it.
+SYMBOL_RE = re.compile(r"^[A-Z0-9^][A-Z0-9.\-^=]{0,19}$")
+
+# Yahoo's list of all cryptocurrencies priced in USD (BTC-USD, ETH-USD, ...), largest market cap first.
+CRYPTO_SCREENER_URL = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
+CRYPTO_SCREENER_ID = "all_cryptocurrencies_us"
+CRYPTO_PAGE_SIZE = 250  # Yahoo's maximum
+CRYPTO_MAX_PAGES = 200
+CRYPTO_FALLBACK = (
+    "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD", "XRP-USD", "USDC-USD", "DOGE-USD",
+    "ADA-USD", "TRX-USD", "AVAX-USD", "LINK-USD", "DOT-USD", "LTC-USD", "BCH-USD", "XLM-USD",
+    "ATOM-USD", "ETC-USD", "XMR-USD", "HBAR-USD",
+)
+
+# Currencies quoted against the US dollar: "ILS=X" is USD/ILS, the price of 1 USD in shekels.
+# All ISO 4217 currencies Yahoo quotes (checked 2026-11; ANG, BGN, BTN, KGS, SSP and ZWL have no quote).
+FIAT_CURRENCIES = (
+    "AED AFN ALL AMD AOA ARS AUD AWG AZN BAM BBD BDT BHD BIF BMD BND BOB BRL BSD BWP BYN BZD CAD CDF "
+    "CHF CLP CNH CNY COP CRC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD "
+    "GNF GTQ GYD HKD HNL HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KHR KMF KPW KRW KWD KYD KZT "
+    "LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK "
+    "NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLE SLL "
+    "SOS SRD STN SVC SYP SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX UYU UZS VES VND VUV WST XAF "
+    "XCD XOF XPF YER ZAR ZMW"
+).split()
+
+# US government debt: Treasury yields in percent (13 weeks, 5, 10, 30 years) and Treasury futures (2, 5, 10, 30 years).
+GOVERNMENT_BONDS = ("^IRX", "^FVX", "^TNX", "^TYX", "ZT=F", "ZF=F", "ZN=F", "ZB=F")
 
 
 class YahooFinanceClient:
@@ -180,6 +212,58 @@ class YahooFinanceClient:
             ]
             logger.warning(f"Using fallback list of {len(fallback_tickers)} NYSE Arca tickers")
             return fallback_tickers
+
+    def get_crypto_tickers(self, max_count: Optional[int] = None, min_market_cap: float = 0) -> List[str]:
+        """
+        Get all cryptocurrencies Yahoo prices in USD (BTC-USD, ETH-USD, ...), largest market cap first.
+
+        Args:
+            max_count: Keep only the largest N (None = all, about 8000).
+            min_market_cap: Skip coins with a smaller market cap in USD (0 = keep all).
+
+        Returns:
+            List of ticker symbols; a short list of major coins if Yahoo can't be reached.
+        """
+        tickers: List[str] = []
+        seen = set()
+        try:
+            data = YfData()
+            start = 0
+            for _ in range(CRYPTO_MAX_PAGES):
+                response = data.get(url=CRYPTO_SCREENER_URL, params={
+                    "scrIds": CRYPTO_SCREENER_ID, "count": CRYPTO_PAGE_SIZE, "start": start,
+                    "formatted": "false", "lang": "en-US", "region": "US",
+                })
+                response.raise_for_status()
+                result = response.json()["finance"]["result"][0]
+                quotes = result.get("quotes") or []
+                for quote in quotes:
+                    symbol = str(quote.get("symbol") or "").upper()
+                    if (symbol.endswith("-USD") and SYMBOL_RE.match(symbol) and symbol not in seen
+                            and (quote.get("marketCap") or 0) >= min_market_cap):
+                        seen.add(symbol)
+                        tickers.append(symbol)
+                start += len(quotes)
+                if not quotes or start >= (result.get("total") or 0) or (max_count and len(tickers) >= max_count):
+                    break
+                time.sleep(0.2)
+        except Exception as e:
+            if not tickers:
+                logger.error(f"Failed to fetch the cryptocurrency list: {e}")
+                logger.warning(f"Using fallback list of {len(CRYPTO_FALLBACK)} cryptocurrencies")
+                return list(CRYPTO_FALLBACK)
+            logger.warning(f"Cryptocurrency list incomplete after {len(tickers)} coins: {e}")
+        tickers = tickers[:max_count] if max_count else tickers
+        logger.info(f"Retrieved {len(tickers)} cryptocurrency tickers")
+        return tickers
+
+    def get_currency_tickers(self) -> List[str]:
+        """USD against every currency Yahoo quotes: 'ILS=X' is USD/ILS, 'EUR=X' is USD/EUR, ..."""
+        return [f"{code}=X" for code in FIAT_CURRENCIES]
+
+    def get_government_bond_tickers(self) -> List[str]:
+        """US Treasury yields (^IRX, ^FVX, ^TNX, ^TYX) and Treasury futures (ZT=F, ZF=F, ZN=F, ZB=F)."""
+        return list(GOVERNMENT_BONDS)
     
     def get_ticker_info(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
