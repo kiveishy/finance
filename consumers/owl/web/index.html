@@ -14,6 +14,7 @@
 <div id="titlebar">
     <button class="icon-button mobile-only" id="toggle-sidebar" title="Toggle sidebar"><i class="codicon codicon-menu"></i></button>
     <img src="icons/owl.svg" alt="" class="titlebar-logo">
+    <div id="menubar" class="menubar" role="menubar"></div>
     <span class="titlebar-title" id="window-title">Owl</span>
     <span class="market-status" id="market-status"></span>
 </div>
@@ -49,6 +50,7 @@
             <div class="welcome-actions">
                 <button class="link" data-action="add-symbol"><i class="codicon codicon-add"></i> Add symbol</button>
                 <button class="link" data-action="new-group"><i class="codicon codicon-new-folder"></i> New group</button>
+                <button class="link" data-action="import-history"><i class="codicon codicon-cloud-download"></i> Import broker history (CSV)</button>
                 <button class="link" data-action="settings"><i class="codicon codicon-settings-gear"></i> Settings (Ctrl+,)</button>
             </div>
         </div>
@@ -70,6 +72,8 @@
                 <button class="toolbar-button" id="draw-note-button" data-action="draw-note" title="Add a comment bubble: click the point it refers to, then type the text (double-click a comment to edit it)"><i class="codicon codicon-comment"></i> Comment</button>
                 <button class="toolbar-button trade-buy" id="draw-buy-button" data-action="draw-buy" title="Record a purchase: amount, price and date (today by default); double-click the label to edit it"><i class="codicon codicon-arrow-circle-up"></i> Buy</button>
                 <button class="toolbar-button trade-sell" id="draw-sell-button" data-action="draw-sell" title="Record a sale: amount, price and date (today by default); double-click the label to edit it"><i class="codicon codicon-arrow-circle-down"></i> Sell</button>
+                <button class="toolbar-button trade-dividend" id="draw-dividend-button" data-action="draw-dividend" title="Record a dividend: amount received, tax withheld and date; the label points at that day's close (double-click it to edit)"><i class="codicon codicon-credit-card"></i> Dividend</button>
+                <button class="icon-button" id="toggle-labels-button" data-action="toggle-labels" title="Hide comments, BUY / SELL and DIVIDEND labels"><i class="codicon codicon-eye"></i></button>
                 <button class="icon-button" id="delete-line-button" data-action="delete-line" title="Delete the selected drawing (Delete)" disabled><i class="codicon codicon-trash"></i></button>
                 <button class="icon-button" id="clear-lines-button" data-action="clear-lines" title="Delete all drawings of this symbol" disabled><i class="codicon codicon-clear-all"></i></button>
                 <div class="toolbar-spacer"></div>

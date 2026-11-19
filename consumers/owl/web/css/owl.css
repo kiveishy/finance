@@ -72,6 +72,15 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--focus); out
 .market-status.closed::before { background: var(--down); }
 body.hide-market-status .market-status { display: none; }
 
+/* ---- menu bar (File / Edit / Actions) ------------------------------------------------------ */
+.menubar { position: absolute; left: 32px; top: env(safe-area-inset-top); height: 30px; display: flex; align-items: stretch; }
+.menubar-item { padding: 0 8px; font-size: 13px; color: #cccccc; border-radius: 4px; margin: 3px 0; }
+.menubar-item:hover, .menubar-item.open { background: rgba(255, 255, 255, 0.1); }
+.menubar-menu { z-index: 120; min-width: 260px; }
+.menubar-menu .menu-item.disabled { opacity: 0.45; cursor: default; }
+.menubar-menu .menu-item.disabled:hover { background: none; }
+.menu-keybinding { color: var(--fg-muted); font-size: 12px; margin-left: 24px; }
+
 /* ---- workbench ---------------------------------------------------------------------------- */
 #workbench { flex: 1; display: flex; min-height: 0; position: relative; }
 
@@ -284,6 +293,8 @@ body.hide-group-change .tree-row .group-change { display: none; }
 #chart-container.drawing { cursor: crosshair; }
 .toolbar-button.trade-buy .codicon { color: #26a69a; }
 .toolbar-button.trade-sell .codicon { color: #ef5350; }
+.toolbar-button.trade-dividend .codicon { color: #42a5f5; }
+#toggle-labels-button.active { color: #ffffff; background: rgba(0, 122, 204, 0.35); }
 .toolbar-spacer { flex: 1; }
 
 .dropdown { position: relative; }
@@ -418,6 +429,41 @@ body.hide-group-change .tree-row .group-change { display: none; }
 .banner-button.buy:hover { background: var(--up); }
 .banner-button.sell { background: #c43c3a; }
 .banner-button.sell:hover { background: var(--down); }
+.banner-button.dividend { background: #1e6bb8; }
+.banner-button.dividend:hover { background: #42a5f5; }
+.banner-button:disabled { opacity: 0.5; cursor: default; }
+
+/* ---- broker history import preview -------------------------------------------------------- */
+.import-dialog { width: min(820px, calc(100vw - 24px)); max-height: calc(100vh - 90px); }
+.import-dialog .form-title { display: flex; align-items: center; gap: 6px; }
+.import-table-wrap { overflow: auto; min-height: 80px; flex: 1; border: 1px solid #3c3c3c; border-radius: 4px; }
+.import-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.import-table th {
+    position: sticky; top: 0; z-index: 1; background: #2d2d2d; color: var(--fg-muted);
+    font-weight: 600; text-align: left; padding: 4px 8px; white-space: nowrap;
+}
+.import-table td { padding: 3px 8px; white-space: nowrap; border-top: 1px solid #2b2b2b; }
+.import-table .num { text-align: right; font-family: var(--mono); }
+.import-table td.note { color: var(--fg-muted); white-space: normal; }
+.import-table tr.muted td { color: var(--fg-muted); }
+.import-table input[type="checkbox"] { margin: 0; vertical-align: middle; }
+.import-symbol td { background: #2a2d2e; padding-top: 5px; padding-bottom: 5px; }
+.import-symbol b { color: #ffffff; margin-right: 8px; }
+.import-name { color: var(--fg-muted); margin-right: 10px; }
+.import-counts { color: var(--fg-muted); font-size: 11px; }
+.import-tag { margin-left: 8px; font-size: 11px; padding: 0 6px; border-radius: 8px; background: #5a4a00; color: #ffe08a; }
+.trade-badge { display: inline-block; min-width: 64px; text-align: center; font-size: 11px; font-weight: 600; border-radius: 3px; padding: 0 4px; color: #ffffff; }
+.trade-badge.buy { background: #0d3b33; border: 1px solid #26a69a; }
+.trade-badge.sell { background: #4a1d1f; border: 1px solid #ef5350; }
+.trade-badge.dividend { background: #0f2d4a; border: 1px solid #42a5f5; }
+.import-skipped { color: var(--fg-muted); font-size: 12px; }
+.import-skipped summary { cursor: pointer; }
+.import-skipped ul { margin: 4px 0 0; padding-left: 20px; }
+.import-option { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.import-option select {
+    background: var(--input-bg); color: var(--fg); border: 1px solid var(--input-border); padding: 2px 4px; font: inherit; color-scheme: dark;
+}
+.import-summary { font-size: 12px; color: var(--fg); }
 
 /* ---- quick input (command palette style) ------------------------------------------------- */
 #quickinput {
@@ -493,7 +539,11 @@ body.hide-group-change .tree-row .group-change { display: none; }
     body.explorer-right #sidebar { left: auto; right: 0; transform: translateX(105%); }
     body.explorer-right.sidebar-open #sidebar { transform: none; }
     body.explorer-right #toggle-sidebar { left: auto; right: 4px; }
-    body.explorer-right .market-status { right: auto; left: 10px; }
+    body.explorer-right .market-status { right: 36px; }
+    .menubar { left: 34px; }
+    body.explorer-right .menubar { left: 4px; }
+    .menubar-item { padding: 0 6px; }
+    .import-table td.note { min-width: 140px; }
     .market-status { font-size: 11px; }
     body:not(.hide-market-status) .titlebar-title { display: none; }
     .settings-toc { display: none; }

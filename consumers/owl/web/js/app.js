@@ -2,9 +2,11 @@
 import { ApiClient, ApiError, loadConnection, saveConnection } from "./api.js";
 import { ChartView, DEFAULT_INDICATORS, INDICATOR_COLORS, indicatorKey, indicatorLabel } from "./chart.js";
 import { ConnectionMonitor, State } from "./connection.js";
-import { ChartDrawings, MAX_DRAWINGS_PER_SYMBOL, MAX_NOTE_LENGTH, roundPrice } from "./drawings.js";
+import { MAX_IMPORT_BYTES, parseBrokerHistory, pickFile, showImportPreview } from "./broker-import.js";
+import { ChartDrawings, MAX_DRAWINGS_PER_SYMBOL, MAX_NOTE_LENGTH, LABEL_CATEGORIES, buildTrade, dayOf, roundPrice, sameTrade } from "./drawings.js";
 import { Explorer } from "./explorer.js";
 import { describeMarket } from "./market.js";
+import { MenuBar } from "./menubar.js";
 import { SettingsPage, SettingsStore } from "./settings.js";
 import { confirm, el, formatNumber, icon, notify, prompt, showForm } from "./ui.js";
 
@@ -17,6 +19,9 @@ const SYMBOL_RE = /^[A-Za-z0-9^][A-Za-z0-9.\-^=]{0,19}$/;
 const INDICATOR_RE = /^(sma|ema|ma)\s*[: ]?\s*(\d{1,4})$/i;
 const TYPE_LABELS = { EQUITY: "Stock", ETF: "ETF", MUTUALFUND: "Fund", INDEX: "Index", FUTURE: "Future", CRYPTOCURRENCY: "Crypto", CURRENCY: "FX" };
 const TYPE_ICONS = { EQUITY: "symbol-event", ETF: "package", MUTUALFUND: "package", INDEX: "graph", FUTURE: "clock", CRYPTOCURRENCY: "circle-large-outline", CURRENCY: "arrow-swap" };
+
+const LABEL_SETTINGS = { note: "chart.showComments", trade: "chart.showTrades", dividend: "chart.showDividends" };
+const LABEL_NAMES = { note: "Comments", trade: "Buy / sell labels", dividend: "Dividend labels" };
 
 const $ = (id) => document.getElementById(id);
 const localToday = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in the user's time zone
@@ -58,6 +63,79 @@ class OwlApp {
         setInterval(() => this.renderMarketStatus(), 15_000);
         this.bindEvents();
         this.renderToolbar();
+        this.menuBar = new MenuBar($("menubar"), this.menus());
+    }
+
+    /** Title bar menus (VS Code style). Items are evaluated when a menu opens. */
+    menus() {
+        const chart = () => Boolean(this.activeSymbol && this.lineTool);
+        const selected = () => (chart() ? this.lineTool.selected : null);
+        return [
+            {
+                label: "File",
+                items: () => [
+                    { label: "Add Symbol…", icon: "add", run: () => this.addSymbol() },
+                    { label: "New Group…", icon: "new-folder", run: () => this.newGroup() },
+                    { label: "Go to Symbol…", icon: "search", keybinding: "Ctrl+P", run: () => this.goToSymbol() },
+                    "-",
+                    { label: "Reload Workspace", icon: "refresh", run: () => { this.connection.check(true); this.refreshGroups(); this.loadChart(); } },
+                    { label: "Close Editor", icon: "close", enabled: Boolean(this.ui.active), run: () => this.close(this.ui.active) },
+                    "-",
+                    { label: "Settings", icon: "settings-gear", keybinding: "Ctrl+,", run: () => this.openSettings() },
+                    { label: "Owl Server Connection…", icon: "plug", run: () => this.editConnection() },
+                ],
+            },
+            {
+                label: "Edit",
+                items: () => [
+                    {
+                        label: "Edit Selected Label", icon: "edit", keybinding: "F2",
+                        enabled: ["note", "trade"].includes(selected()?.type), run: () => this.lineTool.editLabel(),
+                    },
+                    { label: "Delete Selected Drawing", icon: "trash", keybinding: "Delete", enabled: Boolean(selected()), run: () => this.lineTool.deleteSelected() },
+                    { label: "Cancel Drawing", keybinding: "Esc", enabled: Boolean(chart() && this.lineTool.mode), run: () => this.lineTool.cancelDrawing() },
+                    "-",
+                    {
+                        label: chart() ? `Delete All Drawings of ${this.activeSymbol}…` : "Delete All Drawings of Symbol…",
+                        icon: "clear-all", enabled: Boolean(chart() && this.lineTool.lines.length), run: () => this.clearLines(),
+                    },
+                    { label: "Delete Drawings of All Symbols…", enabled: Object.keys(this.drawings).length > 0, run: () => this.clearAllDrawings() },
+                ],
+            },
+            {
+                label: "View",
+                items: () => {
+                    const hidden = this.hiddenLabels;
+                    const toggle = (category) => ({
+                        label: `Show ${LABEL_NAMES[category]}`,
+                        icon: hidden.includes(category) ? null : "check",
+                        run: () => this.setLabelsVisible([category], hidden.includes(category)),
+                    });
+                    return [
+                        toggle("note"),
+                        toggle("trade"),
+                        toggle("dividend"),
+                        "-",
+                        { label: "Show All Labels", icon: "eye", enabled: hidden.length > 0, run: () => this.setLabelsVisible(LABEL_CATEGORIES, true) },
+                        { label: "Hide All Labels", icon: "eye-closed", enabled: hidden.length < LABEL_CATEGORIES.length, run: () => this.setLabelsVisible(LABEL_CATEGORIES, false) },
+                    ];
+                },
+            },
+            {
+                label: "Actions",
+                items: () => [
+                    { label: "Import Broker History (CSV)…", icon: "cloud-download", run: () => this.importBrokerHistory() },
+                    "-",
+                    { label: "Buy…", icon: "arrow-circle-up", enabled: chart(), run: () => this.newTrade("buy") },
+                    { label: "Sell…", icon: "arrow-circle-down", enabled: chart(), run: () => this.newTrade("sell") },
+                    { label: "Dividend…", icon: "credit-card", enabled: chart(), run: () => this.newTrade("dividend") },
+                    "-",
+                    { label: "Comment", icon: "comment", enabled: chart(), run: () => this.toggleDrawing("note") },
+                    { label: "Line", icon: "edit", enabled: chart(), run: () => this.toggleDrawing("line") },
+                    { label: "Arrow", icon: "arrow-right", enabled: chart(), run: () => this.toggleDrawing("arrow") },
+                ],
+            },
+        ];
     }
 
     /** Every user-configurable feature is listed here; the Settings tab is generated from it. */
@@ -107,6 +185,21 @@ class OwlApp {
                 },
             },
             {
+                key: "chart.showComments", section: "Chart", title: "Show Comments", type: "boolean",
+                description: "Show the comment bubbles on the charts. Hidden comments are kept, just not drawn.",
+                default: true,
+            },
+            {
+                key: "chart.showTrades", section: "Chart", title: "Show Buy / Sell Labels", type: "boolean",
+                description: "Show the BUY and SELL labels of your trades on the charts.",
+                default: true,
+            },
+            {
+                key: "chart.showDividends", section: "Chart", title: "Show Dividend Labels", type: "boolean",
+                description: "Show the DIVIDEND labels on the charts.",
+                default: true,
+            },
+            {
                 key: "chart.drawings", section: "Chart", title: "Drawings", type: "action",
                 description: "Lines, arrows, comments and BUY / SELL labels drawn with the chart toolbar. Click one to select it, drag it to move it, drag an end (or a label's tip) to stretch it, double-click a comment or trade to edit it, press Delete to remove it. They are saved per symbol on the server.",
                 detail: () => {
@@ -148,6 +241,42 @@ class OwlApp {
             this.quoteTimer = setInterval(() => this.refreshQuotes(), s.get("explorer.priceRefreshSeconds") * 1000);
         }
         if (keys !== null && changed("explorer.showPrices") && s.get("explorer.showPrices")) this.refreshQuotes();
+        this.applyLabelVisibility();
+    }
+
+    /** Hidden label categories ("note", "trade", "dividend") from the chart.show* settings. */
+    get hiddenLabels() {
+        return LABEL_CATEGORIES.filter((category) => !this.settings.get(LABEL_SETTINGS[category]));
+    }
+
+    applyLabelVisibility() {
+        this.lineTool?.setHidden(this.hiddenLabels);
+        const hidden = this.hiddenLabels.length;
+        const button = $("toggle-labels-button");
+        button.classList.toggle("active", hidden > 0);
+        button.replaceChildren(icon(hidden === LABEL_CATEGORIES.length ? "eye-closed" : "eye"));
+        button.title = hidden ? `Labels hidden: ${this.hiddenLabels.map((c) => LABEL_NAMES[c]).join(", ")} - click to show all`
+            : "Hide comments, BUY / SELL and DIVIDEND labels";
+    }
+
+    /** Shows or hides a label category ("note", "trade", "dividend"). */
+    setLabelsVisible(categories, visible) {
+        Promise.all(categories.map((c) => this.settings.set(LABEL_SETTINGS[c], visible)))
+            .catch((err) => this.reportError("Saving settings failed", err));
+    }
+
+    /** Toolbar button: shows everything when something is hidden, else hides all labels. */
+    toggleLabels() {
+        const anyHidden = this.hiddenLabels.length > 0;
+        this.setLabelsVisible(LABEL_CATEGORIES, anyHidden);
+        notify(anyHidden ? "Comments and labels are shown" : "Comments and labels are hidden (View menu or the eye button shows them)", "info", 3000);
+    }
+
+    /** A new label of a hidden category would be invisible: show that category first. */
+    revealLabels(category) {
+        if (!this.hiddenLabels.includes(category)) return;
+        this.setLabelsVisible([category], true);
+        notify(`${LABEL_NAMES[category]} are shown again`, "info", 3000);
     }
 
     renderMarketStatus() {
@@ -206,6 +335,9 @@ class OwlApp {
             "draw-note": () => this.toggleDrawing("note"),
             "draw-buy": () => this.newTrade("buy"),
             "draw-sell": () => this.newTrade("sell"),
+            "draw-dividend": () => this.newTrade("dividend"),
+            "toggle-labels": () => this.toggleLabels(),
+            "import-history": () => this.importBrokerHistory(),
             "delete-line": () => this.lineTool?.deleteSelected(),
             "clear-lines": () => this.clearLines(),
         };
@@ -545,6 +677,7 @@ class OwlApp {
             }),
             requestTrade: (side, initial) => this.askTrade(side, initial),
         });
+        this.lineTool.setHidden(this.hiddenLabels);
         if (this.lineSymbol !== symbol) {
             this.lineSymbol = symbol;
             this.lastPrice = null;
@@ -666,10 +799,14 @@ class OwlApp {
         if (!tool) return;
         const active = tool.mode === type;
         tool.cancelDrawing();
+        if (!active && type === "note") this.revealLabels("note");
         if (!active && !tool.startDrawing(type)) notify(`At most ${MAX_DRAWINGS_PER_SYMBOL} drawings per symbol`, "warning");
     }
 
-    /** Records a purchase or sale of the open symbol: amount, price (default: last price) and date (default: today). */
+    /**
+     * Records a purchase or sale of the open symbol: amount, price (default: last price) and date (default: today);
+     * or a dividend: cash received, tax withheld and date (the label points at that day's close).
+     */
     async newTrade(side) {
         const tool = this.lineTool;
         const symbol = this.lineSymbol;
@@ -680,16 +817,199 @@ class OwlApp {
             return;
         }
         const price = this.lastPrice ? roundPrice(this.lastPrice) : null;
-        const answer = await this.askTrade(side, { price, amount: null, date: localToday() });
-        if (answer && this.lineSymbol === symbol) tool.addTrade(side, answer);
+        const answer = await this.askTrade(side, { price, amount: null, date: localToday(), tax: 0 });
+        if (!answer) return;
+        if (side === "dividend") {
+            // The label points at that day's close: from the chart when the day is loaded, else fetched.
+            answer.price = tool.closeAt(dayOf(answer.date))
+                ?? (await this.closesOn(symbol, [answer.date]).catch(() => null))?.get(answer.date) ?? price;
+        }
+        if (this.lineSymbol !== symbol) return;
+        this.revealLabels(side === "dividend" ? "dividend" : "trade");
+        if (!tool.addTrade(side, answer)) notify("No price is known for that day - try again when the chart has loaded", "warning");
     }
 
-    /** Amount, price and date of a BUY / SELL in a dialog, or null when cancelled. */
-    async askTrade(side, { price, amount, date }) {
-        const action = side === "buy" ? "Buy" : "Sell";
+    /** Map date -> close of `symbol` on each date (or the last trading day before it). Dates without data are left out. */
+    async closesOn(symbol, dates) {
+        const oldest = dates.reduce((a, b) => (a < b ? a : b));
+        const days = (Date.now() - Date.parse(`${oldest}T00:00:00Z`)) / 86_400_000 + 7;
+        const range = [[31, "1M"], [92, "3M"], [183, "6M"], [366, "1Y"], [731, "2Y"], [1827, "5Y"]]
+            .find(([limit]) => days <= limit)?.[1] ?? "ALL";
+        const { bars } = await this.api.chart(symbol, { range, interval: "D", indicators: [] });
+        const closes = new Map();
+        for (const date of dates) {
+            let lo = 0;
+            let hi = bars.length - 1;
+            if (hi < 0 || bars[0].time > date) continue;
+            while (lo < hi) { // last bar on or before the date
+                const mid = (lo + hi + 1) >> 1;
+                if (bars[mid].time <= date) lo = mid;
+                else hi = mid - 1;
+            }
+            closes.set(date, bars[lo].close);
+        }
+        return closes;
+    }
+
+    // ---- broker history import ---------------------------------------------------------------
+
+    /** Reads a broker's transaction CSV, previews the BUY / SELL / DIVIDEND actions and adds the chosen ones. */
+    async importBrokerHistory() {
+        const file = await pickFile(".csv,text/csv,text/plain");
+        if (!file) return;
+        if (file.size > MAX_IMPORT_BYTES) {
+            notify(`${file.name} is too large (at most ${MAX_IMPORT_BYTES / 1024 / 1024} MB)`, "error");
+            return;
+        }
+        let parsed;
+        try {
+            parsed = parseBrokerHistory(await file.text());
+        } catch (err) {
+            notify(`Importing ${file.name} failed: ${err.message}`, "error", 10000);
+            return;
+        }
+        if (!parsed.actions.length) {
+            notify(`No buy, sell or dividend actions found in ${file.name}`, "warning", 8000);
+            return;
+        }
+        // Mark actions already on a chart (re-imports) and those over the per-symbol limit.
+        const room = new Map();
+        const pools = new Map();
+        for (const action of parsed.actions) {
+            const existing = this.drawings[action.symbol] ?? [];
+            if (!pools.has(action.symbol)) {
+                pools.set(action.symbol, existing.filter((d) => d.type === "trade"));
+                room.set(action.symbol, MAX_DRAWINGS_PER_SYMBOL - existing.length);
+            }
+            const pool = pools.get(action.symbol);
+            const candidate = buildTrade(action.side, { ...action, price: action.price ?? 1 });
+            const match = pool.findIndex((d) => sameTrade(d, candidate));
+            if (match >= 0) {
+                pool.splice(match, 1);
+                action.status = "duplicate";
+            } else if (room.get(action.symbol) <= 0) {
+                action.status = "limit";
+            } else {
+                room.set(action.symbol, room.get(action.symbol) - 1);
+                action.status = null;
+            }
+        }
+        const choice = await showImportPreview({
+            fileName: file.name,
+            actions: parsed.actions,
+            skipped: parsed.skipped,
+            watchlist: new Set(this.explorer.symbols),
+            groups: this.groups,
+        });
+        if (!choice) return;
+        await this.applyImport(choice);
+    }
+
+    async applyImport({ actions, groupId }) {
+        notify(`Adding ${actions.length} actions…`, "info", 3000);
+        const bySymbol = new Map();
+        for (const action of actions) {
+            if (!bySymbol.has(action.symbol)) bySymbol.set(action.symbol, []);
+            bySymbol.get(action.symbol).push(action);
+        }
+        const problems = [];
+        let added = 0;
+        for (const [symbol, items] of bySymbol) {
+            // A dividend points at the close of its day.
+            const dividendDates = items.filter((a) => a.side === "dividend").map((a) => a.date);
+            let closes = new Map();
+            if (dividendDates.length) {
+                try {
+                    closes = await this.closesOn(symbol, dividendDates);
+                } catch (err) {
+                    problems.push(`${symbol}: no prices (${err.message})`);
+                }
+            }
+            const list = [...(this.drawings[symbol] ?? [])];
+            for (const action of items) {
+                if (list.length >= MAX_DRAWINGS_PER_SYMBOL) {
+                    problems.push(`${symbol}: drawing limit of ${MAX_DRAWINGS_PER_SYMBOL} reached`);
+                    break;
+                }
+                const close = closes.get(action.date);
+                const price = action.side === "dividend" ? close && roundPrice(close) : action.price;
+                if (!price) {
+                    problems.push(`${symbol} ${action.date} dividend: no price for that day`);
+                    continue;
+                }
+                // Bubbles are laid out (without overlapping) when the chart first shows them.
+                list.push(buildTrade(action.side, { amount: action.amount, price, date: action.date, tax: action.tax }));
+                added++;
+            }
+            if (list.length) this.drawings[symbol] = list;
+        }
+        localStorage.setItem("owl.drawings", JSON.stringify(this.drawings));
+        try {
+            await this.api.putSetting("drawings", this.drawings);
+        } catch (err) {
+            this.reportError("Saving imported drawings failed", err);
+        }
+        if (this.lineTool && this.lineSymbol && bySymbol.has(this.lineSymbol)) this.lineTool.setLines(this.drawings[this.lineSymbol] ?? []);
+
+        if (groupId !== null) {
+            const watched = new Set(this.explorer.symbols);
+            const missing = [...bySymbol.keys()].filter((s) => !watched.has(s));
+            try {
+                const target = groupId === "__new" ? (await this.api.createGroup("Portfolio")).id
+                    : this.groups.find((g) => String(g.id) === groupId)?.id;
+                if (target === undefined) throw new Error("the group no longer exists");
+                for (const symbol of missing) {
+                    try {
+                        await this.api.addSymbol(target, symbol);
+                    } catch (err) {
+                        problems.push(`${symbol}: not added to the watchlist (${err.message})`);
+                    }
+                }
+            } catch (err) {
+                problems.push(`Creating group failed (${err.message})`);
+            }
+            await this.refreshGroups();
+        }
+        for (const category of new Set(actions.map((a) => (a.side === "dividend" ? "dividend" : "trade")))) this.revealLabels(category);
+        const symbols = bySymbol.size;
+        notify(`Imported ${added} action${added === 1 ? "" : "s"} on ${symbols} symbol${symbols === 1 ? "" : "s"}.`
+            + (problems.length ? ` Not imported: ${problems.slice(0, 5).join("; ")}${problems.length > 5 ? "; …" : ""}` : ""),
+        problems.length ? "warning" : "info", problems.length ? 15000 : 6000,
+        bySymbol.size === 1 ? [{ label: `Open ${[...bySymbol.keys()][0]}`, run: () => this.open([...bySymbol.keys()][0]) }] : []);
+        if (this.ui.active === SETTINGS_TAB) this.settingsPage.render();
+    }
+
+    /** Amount, price and date of a BUY / SELL (amount, tax and date of a DIVIDEND) in a dialog, or null when cancelled. */
+    async askTrade(side, { price, amount, date, tax = 0 }) {
+        const action = { buy: "Buy", sell: "Sell", dividend: "Dividend" }[side];
         const today = localToday();
         const number = (text) => Number(text.replace(/[,\s]/g, ""));
         const positive = (text) => Number.isFinite(number(text)) && number(text) > 0 && number(text) < 1e12;
+        const validDate = (v) => {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(v.date) || Number.isNaN(Date.parse(v.date))) return "Enter a valid date";
+            return v.date > today ? "The date can't be in the future" : null;
+        };
+        if (side === "dividend") {
+            const optional = (text) => !text || (Number.isFinite(number(text)) && number(text) >= 0);
+            const values = await showForm({
+                title: `Dividend of ${this.lineSymbol}`,
+                submitLabel: "Add dividend",
+                submitClass: "dividend",
+                fields: [
+                    { name: "amount", label: "Amount received", type: "number", value: amount ?? "", placeholder: "Cash paid out (before tax)", step: "any", min: "0" },
+                    { name: "tax", label: "Tax withheld", type: "number", value: tax || "", placeholder: "Optional", step: "any", min: "0" },
+                    { name: "date", label: "Date", type: "date", value: date, max: today },
+                ],
+                validate: (v) => {
+                    if (!positive(v.amount)) return "Enter an amount greater than 0";
+                    if (!optional(v.tax) || number(v.tax || "0") > number(v.amount)) return "The tax must be between 0 and the amount";
+                    return validDate(v);
+                },
+                preview: (v) => (positive(v.amount) && optional(v.tax)
+                    ? `Net: ${formatNumber(number(v.amount) - number(v.tax || "0"))}` : ""),
+            });
+            return values && { amount: number(values.amount), tax: number(values.tax || "0"), date: values.date, price: null };
+        }
         const values = await showForm({
             title: `${action} ${this.lineSymbol}`,
             submitLabel: action,
@@ -702,8 +1022,7 @@ class OwlApp {
             validate: (v) => {
                 if (!positive(v.amount)) return "Enter an amount greater than 0";
                 if (!positive(v.price)) return "Enter a price greater than 0";
-                if (!/^\d{4}-\d{2}-\d{2}$/.test(v.date) || Number.isNaN(Date.parse(v.date))) return "Enter a valid date";
-                return v.date > today ? "The date can't be in the future" : null;
+                return validDate(v);
             },
             preview: (v) => (positive(v.amount) && positive(v.price)
                 ? `Total: ${formatNumber(number(v.amount) * number(v.price))}` : ""),

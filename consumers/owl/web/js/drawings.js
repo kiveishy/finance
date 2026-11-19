@@ -1,8 +1,10 @@
 // Drawings on the price pane: trend lines, arrows (click start, click end) and comment bubbles (click the
 // point, type the text). Select, move, stretch an end, edit a comment, delete.
 // Points are anchored to (date, price), so drawings survive zooming, scrolling and D/W/M interval changes.
-// Stored shape: {id, type: "line" | "arrow" | "note", a, b, text?}; a missing type means "line" (older data).
-// For a note, `a` is the point the bubble points to and `b` the bubble centre.
+// Stored shape: {id, type: "line" | "arrow" | "note" | "trade", a, b, text?}; a missing type means "line" (older data).
+// For a note or trade, `a` is the point the bubble points to and `b` the bubble centre.
+// A trade is {side: "buy" | "sell", amount, price} or {side: "dividend", amount (cash received), tax?, price (close
+// of that day, where the label points)}.
 
 const DAY_MS = 86_400_000;
 const LINE_COLOR = "#2962ff";
@@ -27,7 +29,9 @@ const MODES = ["line", "arrow", "note"];
 const TRADE_STYLE = {
     buy: { label: "BUY", fill: "#0d3b33", border: "#26a69a", text: "#ffffff" },
     sell: { label: "SELL", fill: "#4a1d1f", border: "#ef5350", text: "#ffffff" },
+    dividend: { label: "DIVIDEND", fill: "#0f2d4a", border: "#42a5f5", text: "#ffffff" },
 };
+export const TRADE_SIDES = Object.keys(TRADE_STYLE);
 
 const dayOf = (iso) => Date.parse(`${iso}T00:00:00Z`) / DAY_MS;
 /** "YYYY-MM-DD" of a stored day number. */
@@ -35,6 +39,13 @@ export const isoOf = (day) => new Date(Math.round(day) * DAY_MS).toISOString().s
 const round = (value, digits) => Number(value.toFixed(digits));
 const typeOf = (drawing) => drawing.type ?? "line";
 const isBubble = (drawing) => typeOf(drawing) === "note" || typeOf(drawing) === "trade";
+/** Label category that can be hidden: "note" (comments), "trade" (BUY / SELL), "dividend"; null for lines and arrows. */
+export const labelCategory = (drawing) => {
+    if (typeOf(drawing) === "note") return "note";
+    if (typeOf(drawing) !== "trade") return null;
+    return drawing.side === "dividend" ? "dividend" : "trade";
+};
+export const LABEL_CATEGORIES = ["note", "trade", "dividend"];
 let nextId = Date.now();
 const newId = () => `l${(nextId++).toString(36)}`;
 
@@ -45,9 +56,39 @@ export const roundPrice = (price) => (price >= 1 ? round(price, 2) : Number(pric
 
 export function tradeText(trade) {
     const { label } = TRADE_STYLE[trade.side];
+    if (trade.side === "dividend") {
+        const tax = trade.tax ? ` · tax ${formatPrice(trade.tax)}` : "";
+        return `${label} ${formatPrice(trade.amount)}\n${isoOf(trade.a.day)}${tax}`;
+    }
     const total = `Total ${formatPrice(trade.amount * trade.price)}`;
     return `${label} ${formatAmount(trade.amount)} @ ${formatPrice(trade.price)}\n${isoOf(trade.a.day)} · ${total}`;
 }
+
+/**
+ * A trade drawing built without a chart on screen (e.g. imported). `date` is "YYYY-MM-DD"; for a dividend `price` is
+ * where the label points (that day's close). It is marked `auto`: the first time its day is on screen, its bubble is
+ * placed next to the tip where it doesn't cover other bubbles (until then it sits 5% below a BUY, 5% above a SELL
+ * and 8% above a DIVIDEND).
+ */
+export function buildTrade(side, { amount, price, date, tax = 0 }) {
+    const trade = { id: newId(), type: "trade", side, price, amount, a: { day: dayOf(date), price }, auto: true };
+    if (side === "dividend" && tax > 0) trade.tax = tax;
+    const offset = { buy: 0.95, sell: 1.05, dividend: 1.08 }[side];
+    trade.b = { day: trade.a.day, price: Number((price * offset).toPrecision(8)) };
+    return trade;
+}
+
+const overlaps = (r, s) => r.x < s.x + s.w && s.x < r.x + r.w && r.y < s.y + s.h && s.y < r.y + r.h;
+
+/** Whether two trades record the same action (used to skip duplicates when importing). */
+export function sameTrade(x, y) {
+    const close = (p, q) => Math.abs(p - q) <= 1e-6 * Math.max(1, Math.abs(p));
+    if (typeOf(x) !== "trade" || typeOf(y) !== "trade" || x.side !== y.side) return false;
+    if (Math.round(x.a.day) !== Math.round(y.a.day) || !close(x.amount, y.amount)) return false;
+    return x.side === "dividend" || close(x.price, y.price);
+}
+
+export { dayOf };
 
 const bubbleText = (drawing) => (typeOf(drawing) === "trade" ? tradeText(drawing) : drawing.text);
 
@@ -91,6 +132,7 @@ function wrapText(text) {
 class TimeIndex {
     constructor(bars) {
         this.days = bars.map((bar) => dayOf(bar.time));
+        this.closes = bars.map((bar) => bar.close);
         const n = this.days.length;
         const k = Math.min(20, n - 1);
         this.startStep = k > 0 ? (this.days[k] - this.days[0]) / k : 1;
@@ -155,12 +197,27 @@ export class ChartDrawings {
         this.drag = null; // {id, part: "a" | "b" | "line" | "body", start: point, original: drawing}
         this.points = new Map(); // id -> {a, b, rect?, lines?} in pane coordinates, refreshed on every chart update
         this.requestUpdate = () => {};
+        this.hidden = new Set(); // label categories not shown (see labelCategory)
         view.candles.attachPrimitive(this.primitive());
         this.bindEvents();
     }
 
     get drawing() {
         return this.mode !== null;
+    }
+
+    isVisible(drawing) {
+        return !this.hidden.has(labelCategory(drawing));
+    }
+
+    /** Hides the labels of the given categories ("note", "trade", "dividend") and shows the others. */
+    setHidden(categories) {
+        const next = new Set(categories);
+        if ([...next].join() === [...this.hidden].join()) return;
+        this.hidden = next;
+        if (this.selected && !this.isVisible(this.selected)) this.selectedId = null;
+        this.requestUpdate();
+        this.handlers.onState?.();
     }
 
     get selected() {
@@ -217,14 +274,20 @@ export class ChartDrawings {
         this.changed();
     }
 
-    /** Adds a BUY / SELL label at `date` ("YYYY-MM-DD") pointing at `price`; false when the symbol is full. */
-    addTrade(side, { amount, price, date }) {
+    /**
+     * Adds a BUY / SELL / DIVIDEND label at `date` ("YYYY-MM-DD") pointing at `price` (for a dividend: that day's
+     * close when the bar is loaded); false when the symbol is full.
+     */
+    addTrade(side, { amount, price, date, tax = 0 }) {
         if (!Object.hasOwn(TRADE_STYLE, side) || this.lines.length >= MAX_DRAWINGS_PER_SYMBOL) return false;
-        const trade = { id: newId(), type: "trade", side, price, amount, a: { day: dayOf(date), price } };
+        if (side === "dividend") price = this.closeAt(dayOf(date)) ?? price;
+        if (!(price > 0)) return false;
+        // Without a loaded chart there are no pixels: buildTrade's default bubble position is kept.
+        const trade = buildTrade(side, { amount, price, date, tax });
+        delete trade.auto;
         const tip = this.toPoint(trade.a);
-        // Without a loaded chart there are no pixels: put the bubble 5% below / above the price instead.
-        trade.b = (tip && this.bubbleCentre(tip, tradeText(trade), { below: side === "buy" }))
-            ?? { day: trade.a.day, price: price * (side === "buy" ? 0.95 : 1.05) };
+        const body = tip && this.bubbleCentre(tip, tradeText(trade), { below: side === "buy" });
+        if (body) trade.b = body;
         this.lines.push(trade);
         this.selectedId = trade.id;
         this.changed();
@@ -256,6 +319,63 @@ export class ChartDrawings {
         return i >= 0 && i < days.length ? days[i] : day;
     }
 
+    /**
+     * Places the bubbles of imported trades (`auto`) whose day is on screen: beside the tip (below a BUY, above the
+     * others), moved further out or to the other side where it would cover another bubble or leave the pane.
+     */
+    layoutAuto() {
+        this.layoutQueued = false;
+        const range = this.view.chart.timeScale().getVisibleLogicalRange();
+        if (!this.index || !range || this.drag) return;
+        const paneWidth = this.view.chart.timeScale().width();
+        const paneHeight = this.view.chart.panes()[0].getHeight();
+        const placed = this.lines.filter((l) => !l.auto && this.isVisible(l)).map((l) => this.points.get(l.id)?.rect).filter(Boolean);
+        let moved = false;
+        for (const trade of this.lines.filter((l) => l.auto && this.isVisible(l)).sort((x, y) => x.a.day - y.a.day)) {
+            const logical = this.index.toLogical(trade.a.day);
+            const tip = this.toPoint(trade.a);
+            if (logical < range.from || logical > range.to || !tip || tip.y < 0 || tip.y > paneHeight) continue;
+            const { lines: rows, width } = wrapText(tradeText(trade));
+            const w = width + 2 * NOTE.padding;
+            const h = rows.length * NOTE.lineHeight + 2 * NOTE.padding;
+            const x = Math.max(0, Math.min(tip.x - w / 2, paneWidth - w));
+            const rectAt = (down, level) => {
+                const dy = 30 + h / 2 + level * (h + 6);
+                return { x, y: tip.y + (down ? dy : -dy) - h / 2, w, h };
+            };
+            const down = trade.side === "buy";
+            let best = null;
+            for (let level = 0; level < 8 && !best; level++) {
+                best = [rectAt(down, level), rectAt(!down, level)]
+                    .find((r) => r.y >= 0 && r.y + h <= paneHeight && !placed.some((p) => overlaps(p, r))) ?? null;
+            }
+            best ??= rectAt(down, 0);
+            const anchor = this.toAnchor({ x: best.x + w / 2, y: best.y + h / 2 });
+            if (!anchor) continue;
+            trade.b = anchor;
+            delete trade.auto;
+            placed.push(best);
+            moved = true;
+        }
+        if (moved) this.changed();
+    }
+
+    /** Close of the bar on `day` (or the nearest loaded bar before it); null when no bars are loaded or it is earlier. */
+    closeAt(day) {
+        const days = this.index?.days;
+        if (!days?.length || day < days[0] - 7) return null;
+        let lo = 0;
+        let hi = days.length - 1;
+        if (day >= days[hi]) return day - days[hi] <= 7 ? roundPrice(this.index.closes[hi]) : null;
+        if (day <= days[0]) return roundPrice(this.index.closes[0]);
+        while (hi - lo > 1) {
+            const mid = (lo + hi) >> 1;
+            if (days[mid] <= day) lo = mid;
+            else hi = mid;
+        }
+        return roundPrice(this.index.closes[days[hi] === day ? hi : lo]);
+    }
+
     /** Edits the selected (or given) comment's text, or a trade's amount, price and date. */
     async editLabel(id = this.selectedId) {
         const item = this.lines.find((line) => line.id === id);
@@ -268,13 +388,19 @@ export class ChartDrawings {
             item.text = text;
         } else {
             const answer = await this.handlers.requestTrade?.(item.side,
-                { price: item.price, amount: item.amount, date: isoOf(item.a.day) });
+                { price: item.price, amount: item.amount, date: isoOf(item.a.day), tax: item.tax ?? 0 });
             if (!answer || unchanged()) return;
             // Keep the bubble where it was relative to its tip.
             const tip = this.toPoint(item.a);
             const body = this.toPoint(item.b);
             const day = answer.date === isoOf(item.a.day) ? item.a.day : dayOf(answer.date);
-            Object.assign(item, { price: answer.price, amount: answer.amount, a: { day, price: answer.price } });
+            // A dividend points at the close of its day; it has no price of its own.
+            const price = item.side === "dividend" ? (this.closeAt(day) ?? item.price) : answer.price;
+            Object.assign(item, { price, amount: answer.amount, a: { day, price } });
+            if (item.side === "dividend") {
+                if (answer.tax > 0) item.tax = answer.tax;
+                else delete item.tax;
+            }
             const newTip = this.toPoint(item.a);
             const moved = tip && body && newTip && this.toAnchor({ x: newTip.x + body.x - tip.x, y: newTip.y + body.y - tip.y });
             if (moved) item.b = moved;
@@ -334,8 +460,9 @@ export class ChartDrawings {
 
     /** Drawings in paint order: lines and arrows, then comments and trades (on top), then the draft. */
     paintOrder() {
-        const labels = this.lines.filter(isBubble);
-        const others = this.lines.filter((line) => !isBubble(line));
+        const visible = this.lines.filter((line) => this.isVisible(line));
+        const labels = visible.filter(isBubble);
+        const others = visible.filter((line) => !isBubble(line));
         return [...others, ...labels, ...(this.draft ? [this.draft] : [])];
     }
 
@@ -478,8 +605,12 @@ export class ChartDrawings {
             }
         } else {
             const anchor = this.toAnchor(point);
-            // A trade's tip stays on its price and moves only between bars.
-            if (anchor && typeOf(line) === "trade") line.a = { day: this.snapDay(anchor.day), price: line.price };
+            // A trade's tip stays on its price and moves only between bars; a dividend's follows the close.
+            if (anchor && typeOf(line) === "trade") {
+                const day = this.snapDay(anchor.day);
+                if (line.side === "dividend") line.price = this.closeAt(day) ?? line.price;
+                line.a = { day, price: line.price };
+            }
             else if (anchor) line[part] = anchor;
         }
         this.drag.moved = true;
@@ -489,9 +620,12 @@ export class ChartDrawings {
     endDrag() {
         this.consumed = false;
         if (!this.drag) return;
-        const moved = this.drag.moved;
+        const { moved, id } = this.drag;
         this.drag = null;
-        if (moved) this.changed();
+        if (!moved) return;
+        const line = this.lines.find((l) => l.id === id);
+        if (line) delete line.auto; // placed by hand
+        this.changed();
     }
 
     // ---- rendering (Lightweight Charts series primitive) -------------------------------------
@@ -525,6 +659,11 @@ export class ChartDrawings {
                     const w = width + 2 * NOTE.padding;
                     const h = lines.length * NOTE.lineHeight + 2 * NOTE.padding;
                     drawings.points.set(line.id, { a, b, lines, rect: { x: b.x - w / 2, y: b.y - h / 2, w, h } });
+                }
+                // Imported labels are laid out after this pass, when their pixel positions are known.
+                if (!drawings.layoutQueued && drawings.index && drawings.lines.some((l) => l.auto && drawings.isVisible(l))) {
+                    drawings.layoutQueued = true;
+                    setTimeout(() => drawings.layoutAuto());
                 }
             },
             paneViews: () => [paneView],
@@ -629,7 +768,8 @@ function isValidDrawing(line) {
     if (type === "note") return typeof line.text === "string" && line.text.length > 0 && line.text.length <= MAX_NOTE_LENGTH;
     if (type === "trade") {
         const positive = (n) => Number.isFinite(n) && n > 0;
-        return Object.hasOwn(TRADE_STYLE, line.side) && positive(line.price) && positive(line.amount);
+        const tax = line.tax === undefined || (Number.isFinite(line.tax) && line.tax >= 0);
+        return Object.hasOwn(TRADE_STYLE, line.side) && positive(line.price) && positive(line.amount) && tax;
     }
     return DRAWING_TYPES.includes(type);
 }
