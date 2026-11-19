@@ -6,6 +6,7 @@ import { MAX_IMPORT_BYTES, parseBrokerHistory, pickFile, showImportPreview } fro
 import { ChartDrawings, MAX_DRAWINGS_PER_SYMBOL, MAX_NOTE_LENGTH, LABEL_CATEGORIES, buildTrade, dayOf, roundPrice, sameTrade } from "./drawings.js";
 import { Explorer } from "./explorer.js";
 import { describeMarket } from "./market.js";
+import { MarketBar } from "./market-bar.js";
 import { MenuBar } from "./menubar.js";
 import { SettingsPage, SettingsStore } from "./settings.js";
 import { confirm, el, formatNumber, icon, notify, prompt, showForm } from "./ui.js";
@@ -57,6 +58,12 @@ class OwlApp {
             onDeleteGroup: (group) => this.deleteGroup(group),
             onMoveSymbol: (from, symbol, to, options) => this.moveSymbol(from, symbol, to, options),
             onPickMoveTarget: (from, symbol) => this.pickMoveTarget(from, symbol),
+        });
+        this.marketBar = new MarketBar($("market-bar"), {
+            api: this.api,
+            canLoad: () => this.connection.healthy,
+            onOpen: (symbol) => this.open(symbol),
+            onAdd: (symbol) => this.addKnownSymbol(symbol),
         });
         this.applySettings();
         this.renderMarketStatus();
@@ -118,6 +125,12 @@ class OwlApp {
                         "-",
                         { label: "Show All Labels", icon: "eye", enabled: hidden.length > 0, run: () => this.setLabelsVisible(LABEL_CATEGORIES, true) },
                         { label: "Hide All Labels", icon: "eye-closed", enabled: hidden.length < LABEL_CATEGORIES.length, run: () => this.setLabelsVisible(LABEL_CATEGORIES, false) },
+                        "-",
+                        {
+                            label: "Show Market Bar", icon: this.settings.get("workbench.showMarketBar") ? "check" : null,
+                            run: () => this.settings.set("workbench.showMarketBar", !this.settings.get("workbench.showMarketBar"))
+                                .catch((err) => this.reportError("Saving settings failed", err)),
+                        },
                     ];
                 },
             },
@@ -154,6 +167,11 @@ class OwlApp {
             {
                 key: "workbench.showMarketStatus", section: "Workbench", title: "Show Market Status", type: "boolean",
                 description: "Show in the title bar whether the US stock market (NYSE / Nasdaq) is open, in pre-market, after hours or closed, and when it opens or closes. Computed locally in New York time, including NYSE holidays and early closes.",
+                default: true,
+            },
+            {
+                key: "workbench.showMarketBar", section: "Workbench", title: "Show Market Bar", type: "boolean",
+                description: "Show a strip under the title bar with the major indexes (S&P 500, Nasdaq, Dow, TA-35 …), USD/ILS and other currencies, Bitcoin, oil, gold and the US 10-year yield. Click an item for its chart. Prices refresh with the Explorer price interval.",
                 default: true,
             },
             {
@@ -238,8 +256,10 @@ class OwlApp {
         document.body.classList.toggle("hide-group-change", !s.get("explorer.showGroupChange"));
         if (changed("explorer.priceRefreshSeconds")) {
             clearInterval(this.quoteTimer);
-            this.quoteTimer = setInterval(() => this.refreshQuotes(), s.get("explorer.priceRefreshSeconds") * 1000);
+            this.quoteTimer = setInterval(() => { this.refreshQuotes(); this.marketBar.refresh(); }, s.get("explorer.priceRefreshSeconds") * 1000);
         }
+        $("market-bar").hidden = !s.get("workbench.showMarketBar");
+        if (keys !== null && changed("workbench.showMarketBar")) this.marketBar.refresh();
         if (keys !== null && changed("explorer.showPrices") && s.get("explorer.showPrices")) this.refreshQuotes();
         this.applyLabelVisibility();
     }
@@ -305,6 +325,7 @@ class OwlApp {
         }
         await this.connection.check();
         await Promise.all([this.loadSettings(), this.settings.load(), this.refreshGroups()]);
+        this.marketBar.refresh();
         this.ui.tabs = this.ui.tabs.filter((s) => s === SETTINGS_TAB || SYMBOL_RE.test(s));
         if (this.ui.active && this.ui.tabs.includes(this.ui.active)) this.activate(this.ui.active);
         else this.renderTabs();
@@ -493,6 +514,24 @@ class OwlApp {
             await this.api.addSymbol(groupId, symbol);
             await this.refreshGroups();
             this.open(symbol);
+        } catch (err) {
+            this.reportError("Adding symbol failed", err);
+        }
+    }
+
+    /** Adds an already known symbol (e.g. from the market bar) to a group the user picks. */
+    async addKnownSymbol(symbol) {
+        try {
+            const groupId = await this.pickGroup(`Add ${symbol} to group`, symbol);
+            if (groupId === null || groupId === undefined) return;
+            const group = this.groups.find((g) => g.id === groupId);
+            if (group?.items.some((i) => i.symbol === symbol)) {
+                notify(`${symbol} is already in "${group.name}"`, "info", 4000);
+                return;
+            }
+            await this.api.addSymbol(groupId, symbol);
+            await this.refreshGroups();
+            notify(`Added ${symbol} to "${this.groups.find((g) => g.id === groupId)?.name ?? "the watchlist"}"`, "info", 4000);
         } catch (err) {
             this.reportError("Adding symbol failed", err);
         }
@@ -1174,6 +1213,7 @@ class OwlApp {
         } else if (this.connection.healthy && !wasHealthy) {
             this.refreshQuotes();
         }
+        if (this.connection.healthy && !wasHealthy) this.marketBar.refresh();
         if (this.connection.healthy && (!wasHealthy || this.chartPending)) this.loadChart();
         else if (!this.connection.healthy && wasHealthy && this.activeSymbol) this.loadChart();
     }

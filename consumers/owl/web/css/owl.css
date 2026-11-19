@@ -81,6 +81,49 @@ body.hide-market-status .market-status { display: none; }
 .menubar-menu .menu-item.disabled:hover { background: none; }
 .menu-keybinding { color: var(--fg-muted); font-size: 12px; margin-left: 24px; }
 
+/* ---- market bar (indexes, currencies, crypto, commodities) ---------------------------------- */
+.market-bar {
+    flex: none;
+    height: 26px;
+    background: #2b2b2b;
+    border-bottom: 1px solid #1e1e1e;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+}
+.market-bar::-webkit-scrollbar { display: none; }
+.market-track { display: flex; align-items: stretch; height: 100%; width: max-content; }
+.market-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px;
+    font-size: 12px;
+    white-space: nowrap;
+    border-right: 1px solid #333333;
+}
+.market-item:hover { background: rgba(255, 255, 255, 0.07); }
+.market-name { color: var(--fg-muted); }
+.market-price { color: var(--fg); font-variant-numeric: tabular-nums; }
+.market-change { font-variant-numeric: tabular-nums; color: var(--fg-muted); }
+.market-change.up { color: var(--up); }
+.market-change.down { color: var(--down); }
+
+.form-dialog.market-modal { width: min(860px, calc(100vw - 24px)); }
+.market-modal-title { display: flex; align-items: baseline; gap: 8px; }
+.market-modal-title .icon-button { align-self: center; }
+.market-modal-symbol { color: var(--fg-muted); font-weight: normal; font-size: 12px; }
+.market-modal-quote { display: flex; align-items: baseline; gap: 10px; min-height: 22px; }
+.market-modal-price { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.market-modal-date { color: var(--fg-muted); font-size: 12px; }
+.market-modal-chart { position: relative; height: min(420px, calc(100vh - 280px)); min-height: 200px; }
+.market-modal-legend { position: absolute; left: 8px; top: 6px; z-index: 3; font-size: 12px; pointer-events: none; color: var(--fg-muted); }
+.market-modal-legend .v { color: var(--fg); }
+.market-modal-message {
+    position: absolute; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center;
+    color: var(--fg-muted); background: rgba(30, 30, 30, 0.6);
+}
+
 /* ---- workbench ---------------------------------------------------------------------------- */
 #workbench { flex: 1; display: flex; min-height: 0; position: relative; }
 
@@ -524,6 +567,9 @@ body.hide-group-change .tree-row .group-change { display: none; }
     .mobile-only { display: inline-flex !important; }
     .titlebar-logo { display: none; }
     #activitybar, #sash { display: none; }
+    /* The closed off-canvas Explorer (on the right) must not widen the page: mobile Chrome would grow the
+       layout viewport and centre dialogs off screen. */
+    #workbench { overflow: hidden; }
     #sidebar {
         position: absolute;
         left: 0;
