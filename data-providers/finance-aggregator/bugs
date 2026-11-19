@@ -1,0 +1,23 @@
+-----------------------
+2026-11-16 13:25:12,070 ERROR    [status_0] finance_aggregator.core.interfaces: Status probe of provider yahoo-db-api failed
+Traceback (most recent call last):
+  File "requests\models.py", line 1116, in json
+  File "json\__init__.py", line 346, in loads
+  File "json\decoder.py", line 345, in decode
+  File "json\decoder.py", line 363, in raw_decode
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "finance_aggregator\core\interfaces.py", line 121, in check_status
+  File "finance_aggregator\providers\yahoo_db_api.py", line 150, in _probe
+  File "C:\workspace\vms\shared\workspace\common\developement\repos\finance\data-providers\yahoo-db\yahoodb-api.py", line 113, in get_status
+    return self._get("/status")
+           ~~~~~~~~~^^^^^^^^^^^
+  File "C:\workspace\vms\shared\workspace\common\developement\repos\finance\data-providers\yahoo-db\yahoodb-api.py", line 65, in _get
+    return resp.json()
+           ~~~~~~~~~^^
+  File "requests\models.py", line 1120, in json
+requests.exceptions.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+-----------------------

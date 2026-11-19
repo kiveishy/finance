@@ -62,7 +62,7 @@ class YahooDB:
         except requests.RequestException as exc:
             raise YahooDBError(f"GET {url} failed: {exc}") from exc
         self._raise_for_error(resp)
-        return resp.json()
+        return self._json(resp, f"GET {url}")
 
     def _post(self, path: str, json: Optional[dict] = None) -> dict:
         url = f"{self.base_url}{path}"
@@ -71,7 +71,19 @@ class YahooDB:
         except requests.RequestException as exc:
             raise YahooDBError(f"POST {url} failed: {exc}") from exc
         self._raise_for_error(resp)
-        return resp.json()
+        return self._json(resp, f"POST {url}")
+
+    @staticmethod
+    def _json(resp: requests.Response, what: str) -> Any:
+        # A proxy / web filter in the path can answer 200 with an HTML page instead of the API.
+        try:
+            return resp.json()
+        except ValueError as exc:
+            content_type = resp.headers.get("Content-Type", "?")
+            raise YahooDBError(
+                f"{what} returned a non-JSON response ({content_type}); "
+                "the server may be unreachable or blocked by a proxy"
+            ) from exc
 
     def _raise_for_error(self, resp: requests.Response) -> None:
         """Raise YahooDBError if the response indicates failure."""
