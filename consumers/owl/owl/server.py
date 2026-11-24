@@ -36,6 +36,7 @@ from .charts import ChartRequest, ChartService
 from .config import ServerConfig
 from .errors import ConflictError, ResourceNotFoundError, ValidationError
 from .market_data import MarketData
+from .news import DEFAULT_LIMIT, NewsService, UnknownFeedError
 from .quotes import QuoteService
 from .watchlist import WatchItem, WatchlistRepository
 
@@ -122,12 +123,14 @@ class OwlApi:
         status_ttl_seconds: float = 5.0,
         web_build: Callable[[], str] | None = None,
         quotes: QuoteService | None = None,
+        news: NewsService | None = None,
     ) -> None:
         self._market = market
         self._watchlist = watchlist
         self._charts = charts
         self._web_build = web_build
         self._quotes = quotes or QuoteService(market)
+        self._news = news or NewsService()
         self._status_ttl = status_ttl_seconds
         self._status_lock = threading.Lock()
         self._status_cache: tuple[float, ServiceStatus] | None = None
@@ -146,6 +149,8 @@ class OwlApi:
         r.add("GET", "/api/ticker/{symbol}", self._ticker)
         r.add("GET", "/api/search", self._search)
         r.add("GET", "/api/chart/{symbol}", self._chart)
+        r.add("GET", "/api/news", self._get_news)
+        r.add("GET", "/api/news/feeds", lambda req: ok(self._news.feeds()))
         r.add("GET", "/api/settings/{key}", self._get_setting)
         r.add("PUT", "/api/settings/{key}", self._put_setting)
 
@@ -262,6 +267,17 @@ class OwlApi:
             req.params["symbol"], req.query.get("range"), req.query.get("interval"), req.query.get("indicators")
         )
         return ok(self._charts.build(chart_request))
+
+    def _get_news(self, req: Request) -> Response:
+        raw = req.query.get("feeds")
+        feed_ids = None if raw is None else [f.strip() for f in raw.split(",") if f.strip()]
+        limit = req.query.get("limit") or str(DEFAULT_LIMIT)
+        if not limit.isdigit():
+            raise ValidationError("Query parameter 'limit' must be a positive integer")
+        try:
+            return ok(self._news.headlines(feed_ids, int(limit)).to_dict())
+        except UnknownFeedError as exc:
+            raise ValidationError(f"Unknown news feed {exc.args[0]!r}") from None
 
     def _get_setting(self, req: Request) -> Response:
         return ok(self._watchlist.get_setting(_setting_key(req)))

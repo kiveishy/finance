@@ -23,6 +23,7 @@ from .charts import ChartService
 from .quotes import QuoteService
 from .config import OwlConfig, app_home, bundle_dir, default_config_path
 from .market_data import MarketData, create_market_data
+from .news import NewsService
 from .server import OwlApi, OwlServer, StaticFiles
 from .watchlist import SqliteWatchlistRepository, WatchlistRepository
 
@@ -52,7 +53,9 @@ class OwlApplication:
         self.static = StaticFiles(config.web_root or default_web_root())
         charts = ChartService(self.market)
         self.quotes = QuoteService(self.market)
-        self.api = OwlApi(self.market, self.watchlist, charts, web_build=self.static.build_id, quotes=self.quotes)
+        self.news = NewsService()
+        self.api = OwlApi(self.market, self.watchlist, charts, web_build=self.static.build_id, quotes=self.quotes,
+                          news=self.news)
 
     def create_server(self) -> OwlServer:
         server = self.config.server
@@ -82,6 +85,7 @@ class OwlApplication:
 
     def close(self) -> None:
         self.quotes.close()
+        self.news.close()
         self.watchlist.close()
         self.market.close()
 

@@ -176,6 +176,85 @@ body.hide-prices .tree-row .quote, body.hide-prices .tree-row .group-change, bod
 }
 .sidebar-actions { display: flex; gap: 2px; }
 
+/* ---- news panel (left of the editor) -------------------------------------------------------- */
+#news-panel {
+    width: var(--news-width, 320px);
+    flex: none;
+    min-height: 0;
+    background: var(--sidebar-bg);
+    border-right: 1px solid #1b1b1c;
+    display: flex;
+    flex-direction: column;
+}
+body.explorer-right #news-panel { order: 1; } /* row-reverse workbench: highest order is leftmost */
+body.hide-news #news-panel { display: none; }
+.news-header { flex: none; gap: 6px; }
+.news-header > span:first-child { flex: none; }
+.news-count { flex: 1; color: var(--fg-muted); font-size: 11px; }
+.news-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.news-item {
+    display: block;
+    padding: 7px 12px 7px 14px;
+    color: var(--fg);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    border-bottom: 1px solid #2c2c2d;
+}
+.news-item:hover { background: var(--list-hover); }
+.news-item:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
+.news-item:visited .news-title { color: #a0a0a0; }
+.news-item.fresh { border-left-color: var(--up); background: rgba(38, 166, 154, 0.07); }
+.news-title { font-size: 13px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.news-meta { display: flex; gap: 6px; align-items: center; margin-top: 3px; font-size: 11px; color: var(--fg-muted); }
+.news-source { color: #4fc1ff; }
+.news-lang { border: 1px solid #4a4a4a; border-radius: 3px; padding: 0 3px; font-size: 10px; }
+.news-time { margin-left: auto; font-variant-numeric: tabular-nums; }
+.news-empty { padding: 16px 20px; color: var(--fg-muted); }
+.news-status {
+    flex: none;
+    padding: 4px 12px;
+    font-size: 11px;
+    color: var(--fg-muted);
+    border-top: 1px solid #1b1b1c;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: default;
+}
+.news-status .codicon { font-size: 12px; vertical-align: -2px; }
+.news-status.warning .codicon { color: var(--warning); }
+
+/* ---- news sources table (Settings → News) --------------------------------------------------- */
+.feed-settings { display: flex; flex-direction: column; gap: 8px; max-width: 900px; }
+.feed-settings .setting-detail { font-family: var(--font); color: var(--fg-muted); }
+.feed-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.feed-table th { text-align: left; font-weight: normal; color: var(--fg-muted); padding: 4px 8px; border-bottom: 1px solid #3c3c3c; }
+.feed-table td { padding: 6px 8px; border-bottom: 1px solid #2c2c2d; vertical-align: top; }
+.feed-table tr.disabled .feed-name, .feed-table tr.disabled .feed-description { opacity: 0.55; }
+.feed-name { font-weight: 600; color: var(--fg); }
+.feed-tags { font-weight: normal; color: var(--fg-muted); margin-left: 8px; font-size: 11px; }
+.feed-description { color: var(--fg-muted); margin-top: 2px; }
+.feed-links { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 3px; }
+.feed-links a { color: #3794ff; text-decoration: none; user-select: text; }
+.feed-links a:hover { text-decoration: underline; }
+.feed-links .codicon { font-size: 12px; vertical-align: -2px; }
+.feed-url { font-family: var(--mono); font-size: 11px; word-break: break-all; }
+.feed-health { white-space: nowrap; }
+.feed-state .codicon { font-size: 13px; vertical-align: -2px; }
+.feed-state.ok { color: var(--up); }
+.feed-state.error { color: var(--error); white-space: normal; }
+.feed-state.idle { color: var(--fg-muted); }
+
+/* ---- scroll bars: thin and translucent, like the volume bars --------------------------------- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(38, 166, 154, 0.28); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(38, 166, 154, 0.55); }
+::-webkit-scrollbar-button { display: none; }
+@supports not selector(::-webkit-scrollbar) {
+    * { scrollbar-width: thin; scrollbar-color: rgba(38, 166, 154, 0.35) transparent; }
+}
+
 .icon-button {
     width: 24px;
     height: 22px;
@@ -228,7 +307,7 @@ body.hide-group-change .tree-row .group-change { display: none; }
 
 /* ---- editor ------------------------------------------------------------------------------- */
 #editor { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--editor-bg); }
-#tabs { height: 35px; flex: none; display: flex; background: var(--sidebar-bg); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+#tabs { height: 35px; flex: none; display: flex; background: var(--sidebar-bg); overflow-x: auto; overflow-y: hidden; }
 #tabs:empty { display: none; }
 .tab {
     display: flex;
@@ -570,6 +649,11 @@ body.hide-group-change .tree-row .group-change { display: none; }
     /* The closed off-canvas Explorer (on the right) must not widen the page: mobile Chrome would grow the
        layout viewport and centre dialogs off screen. */
     #workbench { overflow: hidden; }
+    /* News: a drawer over the chart, opened from View → Show News Panel. */
+    #news-panel { display: none; position: absolute; left: 0; top: 0; bottom: 0; width: min(340px, 88vw) !important; z-index: 21; box-shadow: var(--widget-shadow); }
+    body.news-open #news-panel { display: flex; }
+    .news-item { padding-top: 9px; padding-bottom: 9px; }
+    .feed-table th:last-child, .feed-table td.feed-health { display: none; }
     #sidebar {
         position: absolute;
         left: 0;

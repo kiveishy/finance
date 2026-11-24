@@ -10,7 +10,8 @@ export class InvalidSettingError extends Error {}
 /**
  * Schema entry:
  *   {key, section, title, description, type: "enum" | "boolean" | "number" | "action", default,
- *    options: [[value, label]] (enum), min, max, unit (number), button, run(), detail() (action)}
+ *    options: [[value, label]] (enum), min, max, unit (number), button, run(), detail() (action),
+ *    validate(value) -> error | null, render(store) -> Node, format(value) -> text (custom: any JSON value with its own editor)}
  */
 export class SettingsStore extends EventTarget {
     constructor(api, schema) {
@@ -46,6 +47,8 @@ export class SettingsStore extends EventTarget {
                     return `Must be between ${s.min} and ${s.max}`;
                 }
                 return null;
+            case "custom":
+                return s.validate(value);
             default:
                 return "Unsupported setting type";
         }
@@ -72,7 +75,7 @@ export class SettingsStore extends EventTarget {
         const before = { ...this.values };
         this.values = this.sanitize(remote);
         writeCache(this.values);
-        const changed = [...this.byKey.keys()].filter((k) => before[k] !== this.values[k]);
+        const changed = [...this.byKey.keys()].filter((k) => JSON.stringify(before[k]) !== JSON.stringify(this.values[k]));
         if (changed.length) this.dispatchEvent(new CustomEvent("change", { detail: { keys: changed } }));
     }
 
@@ -80,11 +83,12 @@ export class SettingsStore extends EventTarget {
     async set(key, value) {
         const error = this.validate(key, value);
         if (error) throw new InvalidSettingError(error);
-        if (value === this.byKey.get(key).default) {
+        const same = (a, b) => a === b || (typeof a === "object" && JSON.stringify(a) === JSON.stringify(b));
+        if (same(value, this.byKey.get(key).default)) {
             if (!this.isModified(key)) return;
             delete this.values[key];
         } else {
-            if (this.values[key] === value) return;
+            if (same(this.values[key], value)) return;
             this.values[key] = value;
         }
         await this.commit([key]);
@@ -137,7 +141,11 @@ export class SettingsPage {
         store.addEventListener("change", () => this.render());
     }
 
-    focusSearch() {
+    focusSearch(text = null) {
+        if (text !== null) {
+            this.search.value = text;
+            this.render();
+        }
         this.search.focus();
     }
 
@@ -184,6 +192,7 @@ export class SettingsPage {
     formatValue(setting, value) {
         if (setting.type === "enum") return setting.options.find(([v]) => v === value)?.[1] ?? String(value);
         if (setting.type === "boolean") return value ? "on" : "off";
+        if (setting.type === "custom") return setting.format ? setting.format(value) : "default";
         return `${value}${setting.unit ? ` ${setting.unit}` : ""}`;
     }
 
@@ -220,6 +229,8 @@ export class SettingsPage {
                         onchange: (e) => this.save(() => this.store.set(key, e.target.valueAsNumber), key),
                     }),
                     setting.unit ? el("span", { class: "setting-unit" }, setting.unit) : null);
+            case "custom":
+                return setting.render(this.store);
             case "action":
                 return el("div", { class: "setting-action" },
                     setting.detail ? el("span", { class: "setting-detail" }, setting.detail()) : null,

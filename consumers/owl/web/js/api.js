@@ -92,6 +92,10 @@ export class ApiClient {
         if (indicators.length) query.set("indicators", indicators.join(","));
         return this.request("GET", `/api/chart/${encodeURIComponent(symbol)}?${query}`);
     }
+    news(feeds, limit = 150) {
+        return this.request("GET", `/api/news?${new URLSearchParams({ feeds: feeds.join(","), limit: String(limit) })}`);
+    }
+    newsFeeds() { return this.request("GET", "/api/news/feeds"); }
     getSetting(key) { return this.request("GET", `/api/settings/${key}`); }
     putSetting(key, value) { return this.request("PUT", `/api/settings/${key}`, value); }
 }

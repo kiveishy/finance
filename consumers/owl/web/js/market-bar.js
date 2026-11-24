@@ -77,12 +77,14 @@ export class MarketBar {
         const quote = this.quotes[item.symbol];
         const button = this.buttons.get(item.symbol);
         const change = quote?.change_percent;
-        button.replaceChildren(
+        const parts = [
             el("span", { class: "market-name" }, item.name),
             el("span", { class: "market-price" }, quote ? priceText(item, quote.close) : "…"),
-            quote && change !== null && change !== undefined
-                ? el("span", { class: `market-change ${tone(change)}` }, `${signed(change)}%`) : null,
-        );
+        ];
+        if (quote && change !== null && change !== undefined) {
+            parts.push(el("span", { class: `market-change ${tone(change)}` }, `${signed(change)}%`));
+        }
+        button.replaceChildren(...parts);
         button.title = quote
             ? `${item.name} (${item.symbol}) · ${item.kind}\n${priceText(item, quote.close)}  ${signed(quote.change ?? 0, item.digits ?? 2)} (${signed(change ?? 0)}%)\nClose of ${quote.date} · ${quote.source}\nClick for the chart`
             : `${item.name} (${item.symbol}) · ${item.kind}\nClick for the chart`;

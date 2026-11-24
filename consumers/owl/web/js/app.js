@@ -7,6 +7,7 @@ import { ChartDrawings, MAX_DRAWINGS_PER_SYMBOL, MAX_NOTE_LENGTH, LABEL_CATEGORI
 import { Explorer } from "./explorer.js";
 import { describeMarket } from "./market.js";
 import { MarketBar } from "./market-bar.js";
+import { FEEDS_SETTING, NewsCenter, validateFeedChoices } from "./news.js";
 import { MenuBar } from "./menubar.js";
 import { SettingsPage, SettingsStore } from "./settings.js";
 import { confirm, el, formatNumber, icon, notify, prompt, showForm } from "./ui.js";
@@ -25,6 +26,7 @@ const LABEL_SETTINGS = { note: "chart.showComments", trade: "chart.showTrades", 
 const LABEL_NAMES = { note: "Comments", trade: "Buy / sell labels", dividend: "Dividend labels" };
 
 const $ = (id) => document.getElementById(id);
+const isMobile = () => window.matchMedia("(max-width: 768px)").matches;
 const localToday = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in the user's time zone
 
 class OwlApp {
@@ -64,6 +66,14 @@ class OwlApp {
             canLoad: () => this.connection.healthy,
             onOpen: (symbol) => this.open(symbol),
             onAdd: (symbol) => this.addKnownSymbol(symbol),
+        });
+        this.news = new NewsCenter($("news-panel"), {
+            api: this.api,
+            settings: this.settings,
+            canLoad: () => this.connection.healthy,
+            openSettings: () => this.openNewsSettings(),
+            onClose: () => this.toggleNews(false),
+            onSourcesChanged: () => this.renderSettingsIfIdle(),
         });
         this.applySettings();
         this.renderMarketStatus();
@@ -131,6 +141,11 @@ class OwlApp {
                             run: () => this.settings.set("workbench.showMarketBar", !this.settings.get("workbench.showMarketBar"))
                                 .catch((err) => this.reportError("Saving settings failed", err)),
                         },
+                        {
+                            label: "Show News Panel", icon: this.newsShown ? "check" : null,
+                            run: () => this.toggleNews(!this.newsShown),
+                        },
+                        { label: "News Sources…", icon: "rss", run: () => this.openNewsSettings() },
                     ];
                 },
             },
@@ -190,6 +205,28 @@ class OwlApp {
             {
                 key: "explorer.priceRefreshSeconds", section: "Explorer", title: "Price Refresh Interval", type: "number",
                 description: "How often the Explorer prices are refreshed.", min: 15, max: 3600, unit: "seconds", default: 60,
+            },
+            {
+                key: "news.show", section: "News", title: "Show News Panel", type: "boolean",
+                description: "Show the latest financial headlines in a scrolling panel on the left of the chart. Click a headline to open the article in your browser. On a phone, open it from View → Show News Panel.",
+                default: true,
+            },
+            {
+                key: "news.panelWidth", section: "News", title: "News Panel Width", type: "number",
+                description: "Width of the news panel.", default: 320, min: 220, max: 640, step: 10, unit: "px",
+            },
+            {
+                key: "news.refreshMinutes", section: "News", title: "Refresh Interval", type: "number",
+                description: "How often to check for new headlines. The owl server caches each feed for 2 minutes.",
+                default: 5, min: 1, max: 60, unit: "minutes",
+            },
+            {
+                key: FEEDS_SETTING, section: "News", title: "News Sources", type: "custom",
+                description: "Where the headlines come from. Turn sources on or off; the table shows each feed's publisher, the exact feed address the owl server reads, and how its last download went.",
+                default: {},
+                validate: validateFeedChoices,
+                format: () => "the default sources",
+                render: () => this.news.renderFeedSettings(),
             },
             {
                 key: "chart.resetIndicators", section: "Chart", title: "Indicators", type: "action",
@@ -259,6 +296,10 @@ class OwlApp {
             this.quoteTimer = setInterval(() => { this.refreshQuotes(); this.marketBar.refresh(); }, s.get("explorer.priceRefreshSeconds") * 1000);
         }
         $("market-bar").hidden = !s.get("workbench.showMarketBar");
+        document.body.classList.toggle("hide-news", !s.get("news.show"));
+        document.documentElement.style.setProperty("--news-width", `${s.get("news.panelWidth")}px`);
+        if (changed("news.refreshMinutes")) this.news.schedule(s.get("news.refreshMinutes"));
+        if (keys !== null && (changed(FEEDS_SETTING) || (changed("news.show") && s.get("news.show")))) this.news.refresh();
         if (keys !== null && changed("workbench.showMarketBar")) this.marketBar.refresh();
         if (keys !== null && changed("explorer.showPrices") && s.get("explorer.showPrices")) this.refreshQuotes();
         this.applyLabelVisibility();
@@ -312,6 +353,34 @@ class OwlApp {
         this.settingsPage.focusSearch();
     }
 
+    /** Settings filtered to the News section (feed list with where each feed comes from). */
+    openNewsSettings() {
+        document.body.classList.remove("news-open");
+        this.open(SETTINGS_TAB);
+        this.settingsPage.focusSearch("news");
+        if (!this.news.sources.loaded) this.news.loadSources().then(() => this.renderSettingsIfIdle());
+    }
+
+    /** Re-renders the Settings tab (e.g. new feed statuses) unless the user is typing in it. */
+    renderSettingsIfIdle() {
+        if (this.ui.active !== SETTINGS_TAB || $("settings-panel").contains(document.activeElement)) return;
+        this.settingsPage.render();
+    }
+
+    /** Desktop: the news.show setting. Phone: a drawer over the chart. */
+    get newsShown() {
+        return isMobile() ? document.body.classList.contains("news-open") : this.settings.get("news.show");
+    }
+
+    toggleNews(show) {
+        if (isMobile()) {
+            document.body.classList.toggle("news-open", show);
+            if (show) this.news.refresh();
+            return;
+        }
+        this.settings.set("news.show", show).catch((err) => this.reportError("Saving settings failed", err));
+    }
+
     /** The symbol of the active chart tab (null when no tab or the Settings tab is active). */
     get activeSymbol() {
         return this.ui.active === SETTINGS_TAB ? null : this.ui.active;
@@ -326,6 +395,7 @@ class OwlApp {
         await this.connection.check();
         await Promise.all([this.loadSettings(), this.settings.load(), this.refreshGroups()]);
         this.marketBar.refresh();
+        this.news.refresh();
         this.ui.tabs = this.ui.tabs.filter((s) => s === SETTINGS_TAB || SYMBOL_RE.test(s));
         if (this.ui.active && this.ui.tabs.includes(this.ui.active)) this.activate(this.ui.active);
         else this.renderTabs();
@@ -1213,7 +1283,10 @@ class OwlApp {
         } else if (this.connection.healthy && !wasHealthy) {
             this.refreshQuotes();
         }
-        if (this.connection.healthy && !wasHealthy) this.marketBar.refresh();
+        if (this.connection.healthy && !wasHealthy) {
+            this.marketBar.refresh();
+            this.news.refresh();
+        }
         if (this.connection.healthy && (!wasHealthy || this.chartPending)) this.loadChart();
         else if (!this.connection.healthy && wasHealthy && this.activeSymbol) this.loadChart();
     }
